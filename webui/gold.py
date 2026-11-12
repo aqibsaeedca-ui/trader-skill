@@ -195,6 +195,15 @@ def size_text(entry, stop, args, symbol):
         if oz < 10:
             one = 10 * abs(entry - stop)
             s += ". One micro (10 oz) would risk %s = %s of the account" % (fmt(one, 0, "$"), fmt(one / args.account * 100, 1, suf="%"))
+    # what fits a small account: unleveraged gold (ETF / fractional shares) and the smallest spot lot
+    stop_pct = abs(entry - stop) / entry
+    pos = risk_usd / stop_pct
+    unlev = "unleveraged (gold ETF/fractional): hold %s = %s of account" % (fmt(pos, 0, "$"), fmt(pos / args.account * 100, 0, suf="%"))
+    if pos > args.account:
+        unlev = "unleveraged (gold ETF): the stop is so tight that sizing to risk exceeds the account; capped at the whole account = risk %s" % fmt(args.account * stop_pct, 0, "$")
+    one_oz = abs(entry - stop)
+    s += "\n       Small-account fit    %s; smallest spot lot (1 oz) risks %s = %s" % (
+        unlev, fmt(one_oz, 0, "$"), fmt(one_oz / args.account * 100, 1, suf="%"))
     return s
 
 

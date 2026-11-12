@@ -46,7 +46,7 @@ COMMANDS = [
          params=[P("symbol", "Contract", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
                  P("horizon", "Trade zones", "select", "both", "--horizon",
                    choices=["both", "short", "long", "none"]),
-                 P("account", "Account size ($)", "number", "10000", "--account"),
+                 P("account", "Account size ($)", "number", "2700", "--account"),
                  P("risk", "Risk per trade (%)", "number", "1", "--risk-pct"),
                  P("stop", "Stop distance ($/oz, blank = ATR based)", "number", "", "--stop"),
                  P("atr", "ATR multiple for the stop", "number", "2", "--atr-mult")]),
