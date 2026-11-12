@@ -42,7 +42,7 @@ COMMANDS = [
     dict(id="gold", group="Gold", title="Gold assessment",
          help="Trend, volatility, levels and a risk-based position size from delayed Yahoo daily bars. "
               "Read-only; statistics describe the past and do not predict price.",
-         script="webui/gold.py", fixed=[],
+         script="webui/gold.py", fixed=["--json"], view="gold",
          params=[P("symbol", "Contract", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
                  P("horizon", "Trade zones", "select", "both", "--horizon",
                    choices=["both", "short", "long", "none"]),

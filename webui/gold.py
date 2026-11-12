@@ -310,6 +310,75 @@ def short_term_inputs(daily):
     return daily[-120:], pts, [(p, l) for p, l in extra if p]
 
 
+_WEEKLY = {}
+
+
+def weekly_bars(symbol):
+    if symbol not in _WEEKLY:
+        _WEEKLY[symbol] = fetch_bars(symbol, "5y", "1wk")[0]
+    return _WEEKLY[symbol]
+
+
+def long_term_inputs(weekly):
+    """Trend points and extra levels for the weekly scenarios."""
+    wc = [b[3] for b in weekly]
+    w10, w40 = sma(wc, 10), sma(wc, 40)
+    wlast = wc[-1]
+    wpts = 2
+    if w10 and w40:
+        wpts = sum([wlast > w10, wlast > w40, w10 > w40, wc[-1] > wc[-13] if len(wc) > 13 else False])
+    extra = [(p, l) for p, l in ((w10, "10w avg"), (w40, "40w avg (~200d)")) if p]
+    extra += [(max(b[1] for b in weekly[-52:]), "52w high"), (min(b[2] for b in weekly[-52:]), "52w low")]
+    return wpts, extra
+
+
+def zone_dict(z, last, atr_v):
+    return dict(lo=z["lo"], hi=z["hi"], mid=z["mid"], n=z["n"], labels=sorted(set(z["labels"])),
+                dist_pct=pct(z["mid"], last), dist_atr=abs(z["mid"] - last) / atr_v)
+
+
+def setup_dict(s, args, symbol):
+    risk = abs(s["level"] - s["stop"])
+    d = dict(name=s["name"], side=s["side"], kind=s["kind"], level=s["level"], stop=s["stop"],
+             risk_per_oz=risk, trend=s["trend"], weak=s["weak"],
+             zone=[s["zone"]["lo"], s["zone"]["hi"]],
+             targets=[dict(price=t, r=abs(t - s["level"]) / risk if risk else 0) for t in s["targets"]])
+    if args.account and risk:
+        risk_usd = args.account * args.risk_pct / 100
+        stop_pct = risk / s["level"]
+        etf = min(risk_usd / stop_pct, args.account)
+        d["size"] = dict(risk_usd=risk_usd, etf_usd=etf, etf_pct=etf / args.account * 100,
+                         one_oz_risk=risk, one_oz_pct=risk / args.account * 100,
+                         micro_risk=10 * risk, micro_pct=10 * risk / args.account * 100)
+    return d
+
+
+def section_dict(c, args, symbol):
+    return dict(bias=c["bias"], atr=c["atr"], last=c["last"],
+                sup=[zone_dict(z, c["last"], c["atr"]) for z in c["sup"]],
+                res=[zone_dict(z, c["last"], c["atr"]) for z in c["res"]],
+                setups=[setup_dict(s, args, symbol) for s in c["setups"]])
+
+
+def build_json(symbol, bars, a, meta, args):
+    out = {"symbol": symbol, "currency": meta.get("currency", "USD"), "analysis": a,
+           "trend_read": trend_read(a), "account": args.account, "risk_pct": args.risk_pct,
+           "horizon": args.horizon}
+    if args.horizon in ("short", "both"):
+        win, spts, extra = short_term_inputs(bars)
+        out["short"] = section_dict(compute_setups(win, spts, 5, 120, extra, 100), args, symbol)
+    if args.horizon in ("long", "both"):
+        try:
+            weekly = weekly_bars(symbol)
+            wpts, extra = long_term_inputs(weekly)
+            out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, 250), args, symbol)
+        except SystemExit as e:
+            out["long_error"] = str(e)
+    extra_txt = zones_report(symbol, bars, a, args) if args.horizon != "none" else None
+    out["report"] = report(symbol, a, meta, args, extra_txt)
+    return out
+
+
 def zones_report(symbol, daily, a, args):
     out = []
     pts = 0
@@ -325,18 +394,11 @@ def zones_report(symbol, daily, a, args):
         out.append("")
     if args.horizon in ("long", "both"):
         try:
-            weekly, _ = fetch_bars(symbol, "5y", "1wk")
+            weekly = weekly_bars(symbol)
         except SystemExit as e:
             out.append("LONG-TERM ZONES: could not load weekly data (%s)" % e)
             return out
-        wc = [b[3] for b in weekly]
-        w10, w40 = sma(wc, 10), sma(wc, 40)
-        wlast = wc[-1]
-        wpts = 2
-        if w10 and w40:
-            wpts = sum([wlast > w10, wlast > w40, w10 > w40, wc[-1] > wc[-13] if len(wc) > 13 else False])
-        extra = [(p, l) for p, l in ((w10, "10w avg"), (w40, "40w avg (~200d)")) if p]
-        extra += [(max(b[1] for b in weekly[-52:]), "52w high"), (min(b[2] for b in weekly[-52:]), "52w low")]
+        wpts, extra = long_term_inputs(weekly)
         out += horizon_section("LONG-TERM ZONES (weekly chart, weeks to months)", "weekly", weekly, wpts, 4, 104,
                                extra, 250, args, symbol)
         out.append("")
@@ -418,7 +480,7 @@ def main(argv=None):
         raise SystemExit("error: only %d bars returned; need at least 60" % len(bars))
     a = analyse(bars)
     if args.json:
-        print(json.dumps(a, indent=2))
+        print(json.dumps(build_json(args.symbol, bars, a, meta, args), indent=1, allow_nan=False))
     else:
         extra = zones_report(args.symbol, bars, a, args) if args.horizon != "none" else None
         print(report(args.symbol, a, meta, args, extra))
