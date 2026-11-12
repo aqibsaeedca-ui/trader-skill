@@ -1,0 +1,4 @@
+# runtime data the skills and the web view write: settings, state, alert logs
+trader/
+__pycache__/
+*.pyc

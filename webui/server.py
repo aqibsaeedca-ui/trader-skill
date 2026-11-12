@@ -18,7 +18,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import gold_watch  # noqa: E402  (same folder; the watcher never places orders)
+
 ROOT = Path(__file__).resolve().parent.parent
+WATCHER = gold_watch.Watcher()
 WEB = Path(__file__).resolve().parent
 TRADER_DIR = ROOT / "trader"
 HOST, PORT = "127.0.0.1", int(os.environ.get("TRADER_WEB_PORT", "8765"))
@@ -44,8 +47,8 @@ COMMANDS = [
               "Read-only; statistics describe the past and do not predict price.",
          script="webui/gold.py", fixed=["--json"], view="gold",
          params=[P("symbol", "Contract", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
-                 P("horizon", "Trade zones", "select", "both", "--horizon",
-                   choices=["both", "short", "long", "none"]),
+                 P("horizon", "Timeframes", "select", "all", "--horizon",
+                   choices=["all", "intraday", "short", "long", "none"]),
                  P("account", "Account size ($)", "number", "2700", "--account"),
                  P("risk", "Risk per trade (%)", "number", "1", "--risk-pct"),
                  P("stop", "Stop distance ($/oz, blank = ATR based)", "number", "", "--stop"),
@@ -239,6 +242,28 @@ def run_command(cmd_id, values):
                 seconds=round(time.time() - start, 2))
 
 
+def watch_action(body):
+    """Control the gold alert watcher. Settings are validated; nothing here places orders."""
+    action = str(body.get("action", ""))
+    if action == "settings":
+        WATCHER.configure(body.get("settings"))
+    elif action == "start":
+        if "settings" in body:
+            WATCHER.configure(body.get("settings"))
+        WATCHER.start()
+    elif action == "stop":
+        WATCHER.stop()
+    elif action == "check":
+        WATCHER.check_once()
+    elif action == "test":
+        WATCHER.test()
+    elif action == "clear":
+        WATCHER.clear()
+    else:
+        raise BadInput("unknown action")
+    return WATCHER.status()
+
+
 def list_files():
     if not TRADER_DIR.is_dir():
         return []
@@ -288,6 +313,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/commands":
             return self._json(200, {"commands": COMMANDS, "root": str(ROOT),
                                     "python": sys.version.split()[0]})
+        if path == "/api/gold/watch":
+            return self._json(200, WATCHER.status())
         if path == "/api/files":
             return self._json(200, {"files": list_files()})
         if path == "/api/file":
@@ -301,7 +328,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self._json(403, {"error": "bad host"})
-        if self.path != "/api/run":
+        if self.path not in ("/api/run", "/api/gold/watch"):
             return self._json(404, {"error": "not found"})
         # JSON content type forces a CORS preflight, which we never grant,
         # so other websites cannot trigger runs from the user's browser.
@@ -313,6 +340,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(min(length, 20_000)) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+            if self.path == "/api/gold/watch":
+                return self._json(200, watch_action(body))
             result = run_command(str(body.get("id", "")), body.get("values") or {})
         except BadInput as e:
             return self._json(400, {"error": str(e)})

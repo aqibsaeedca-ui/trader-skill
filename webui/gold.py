@@ -207,8 +207,10 @@ def size_text(entry, stop, args, symbol):
     return s
 
 
-def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step):
-    """Zones and the four scenarios, using only the bars given (no look-ahead)."""
+def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step, min_risk_atr=0.0):
+    """Zones and the four scenarios, using only the bars given (no look-ahead).
+    min_risk_atr > 0 pushes any stop at least that many ATRs from the entry (used intraday,
+    where a stop inside normal noise is just a donation)."""
     last = bars[-1][3]
     atr_v = atr(bars)
     levels = [(p, lab) for _, lab, p in swings(bars[-fib_window:], k)]
@@ -239,6 +241,10 @@ def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step):
     setups = []
 
     def setup(name, side, kind, level, stop, targets, z):
+        if min_risk_atr:
+            sgn = 1 if side == "long" else -1
+            if (level - stop) * sgn < min_risk_atr * atr_v:
+                stop = level - sgn * min_risk_atr * atr_v
         setups.append(dict(name=name, side=side, kind=kind, level=level, stop=stop, targets=targets,
                            trend=trend_of(side), weak=z["n"] < 2, zone=z))
 
@@ -256,11 +262,48 @@ def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step):
         z = bsup
         setup("SHORT on a breakdown", "short", "breakout", z["lo"] - 0.25 * atr_v, z["hi"] + 0.25 * atr_v,
               [s["mid"] for s in sup if s["mid"] < z["mid"]][:1], z)
-    return dict(last=last, atr=atr_v, bias=bias, sup=sup, res=res, setups=setups)
+    return dict(last=last, atr=atr_v, bias=bias, sup=sup, res=res, setups=setups, levels=levels)
 
 
-def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, step, args, symbol):
-    c = compute_setups(bars, trend_pts, k, fib_window, extra_levels, step)
+def wants(args, part):
+    """part is 'intraday', 'short' (daily) or 'long' (weekly)."""
+    return args.horizon in ("all", "both", part) and not (args.horizon == "both" and part == "intraday")
+
+
+_INTRA = {}
+
+
+def intraday_result(symbol):
+    if symbol not in _INTRA:
+        import gold_intraday
+        _INTRA[symbol] = gold_intraday.analyse(symbol)
+    return _INTRA[symbol]
+
+
+def intraday_report(symbol, args):
+    import gold_intraday as gi
+    res = intraday_result(symbol)
+    sup, rs = gi.split_levels(res, only_key=True)
+    L = ["KEY LEVELS WHERE TIMEFRAMES AGREE (price %s)" % fmt(res["price"], 2, "$")]
+    for title, rows in (("  Above:", list(reversed(rs))), ("  Below:", sup)):
+        L.append(title)
+        for l in rows:
+            rng = "%s - %s" % (fmt(l["lo"], 0, "$"), fmt(l["hi"], 0, "$")) if l["hi"] - l["lo"] >= 1 else fmt(l["mid"], 0, "$")
+            L.append("    %-17s %-15s %s from price  [%s]" % (rng, "+".join(l["tfs"]), fmt(l["dist_pct"], 2, suf="%"),
+                                                              ", ".join(l["signals"][:4])))
+        if not rows:
+            L.append("    none within 5%")
+    L.append("")
+    for tf in gi.INTRADAY:
+        L += horizon_section("%s SETUPS (%s chart, hours to days)" % (gi.CFG[tf]["name"].upper(), tf), tf,
+                             res["bars"][tf], 0, 0, 0, [], 0, args, symbol, c=res["setup"][tf])
+        L.append("")
+    return L
+
+
+def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, step, args, symbol, c=None):
+    if c is None:
+        c = compute_setups(bars, trend_pts, k, fib_window, extra_levels, step)
     last, atr_v, bias, sup, res = c["last"], c["atr"], c["bias"], c["sup"], c["res"]
     L = []
     add = L.append
@@ -348,6 +391,7 @@ def setup_dict(s, args, symbol):
         stop_pct = risk / s["level"]
         etf = min(risk_usd / stop_pct, args.account)
         d["size"] = dict(risk_usd=risk_usd, etf_usd=etf, etf_pct=etf / args.account * 100,
+                         etf_capped=risk_usd / stop_pct > args.account, etf_risk=etf * stop_pct,
                          one_oz_risk=risk, one_oz_pct=risk / args.account * 100,
                          micro_risk=10 * risk, micro_pct=10 * risk / args.account * 100)
     return d
@@ -364,10 +408,19 @@ def build_json(symbol, bars, a, meta, args):
     out = {"symbol": symbol, "currency": meta.get("currency", "USD"), "analysis": a,
            "trend_read": trend_read(a), "account": args.account, "risk_pct": args.risk_pct,
            "horizon": args.horizon}
-    if args.horizon in ("short", "both"):
+    if wants(args, "intraday"):
+        try:
+            import gold_intraday as gi
+            res = intraday_result(symbol)
+            sup, rs = gi.split_levels(res, only_key=True)
+            out["intraday"] = {tf: section_dict(res["setup"][tf], args, symbol) for tf in gi.INTRADAY}
+            out["confluence"] = {"price": res["price"], "support": sup, "resistance": rs}
+        except SystemExit as e:
+            out["intraday_error"] = str(e)
+    if wants(args, "short"):
         win, spts, extra = short_term_inputs(bars)
         out["short"] = section_dict(compute_setups(win, spts, 5, 120, extra, 100), args, symbol)
-    if args.horizon in ("long", "both"):
+    if wants(args, "long"):
         try:
             weekly = weekly_bars(symbol)
             wpts, extra = long_term_inputs(weekly)
@@ -387,12 +440,18 @@ def zones_report(symbol, daily, a, args):
     s20, s50, s200 = a["sma20"], a["sma50"], a["sma200"]
     if None not in (s20, s50, s200):
         pts = sum([last > s20, last > s50, last > s200, s50 > s200])
-    if args.horizon in ("short", "both"):
+    if wants(args, "intraday"):
+        try:
+            out += intraday_report(symbol, args)
+        except SystemExit as e:
+            out.append("INTRADAY SETUPS: could not load intraday data (%s)" % e)
+            out.append("")
+    if wants(args, "short"):
         win, spts, extra = short_term_inputs(daily)
         out += horizon_section("SHORT-TERM ZONES (daily chart, days to a few weeks)", "daily", win, spts, 5, 120,
                                extra, 100, args, symbol)
         out.append("")
-    if args.horizon in ("long", "both"):
+    if wants(args, "long"):
         try:
             weekly = weekly_bars(symbol)
         except SystemExit as e:
@@ -469,8 +528,8 @@ def main(argv=None):
     ap.add_argument("--risk-pct", type=float, default=1.0, help="percent of account risked per trade")
     ap.add_argument("--stop", type=float, default=None, help="stop distance in dollars per ounce (default: ATR based)")
     ap.add_argument("--atr-mult", type=float, default=2.0)
-    ap.add_argument("--horizon", choices=["none", "short", "long", "both"], default="both",
-                    help="which trade-zone sections to add")
+    ap.add_argument("--horizon", choices=["all", "intraday", "short", "long", "both", "none"], default="all",
+                    help="trade-zone sections: intraday (15m/1h/4h), short (daily), long (weekly), all")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     if args.risk_pct <= 0 or args.risk_pct > 100:
