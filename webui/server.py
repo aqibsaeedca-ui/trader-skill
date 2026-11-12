@@ -81,7 +81,7 @@ COMMANDS = [
     # ---- watch
     dict(id="news", group="Watch", title="News monitor",
          help="Headlines and SEC 8-Ks for your tickers.",
-         script="trader-news/news.py", fixed=[],
+         script="trader-news/news.py", fixed=["--json"], view="news",
          params=[P("tickers", "Tickers", default="AAPL KO", flag="--tickers", multi=True),
                  P("hours", "Hours back", "number", "24", "--hours"),
                  P("nosec", "Headlines only (skip SEC)", "check", flag="--no-sec"),
@@ -224,7 +224,7 @@ def run_command(cmd_id, values):
     except subprocess.TimeoutExpired as e:
         code, out, err = -1, e.stdout or b"", (e.stderr or b"") + f"\n[timed out after {TIMEOUT}s]".encode()
     dec = lambda b: b.decode("utf-8", "replace")[:MAX_OUT]
-    return dict(command=shown, code=code, stdout=dec(out), stderr=dec(err),
+    return dict(command=shown, view=cmd.get("view", ""), code=code, stdout=dec(out), stderr=dec(err),
                 seconds=round(time.time() - start, 2))
 
 

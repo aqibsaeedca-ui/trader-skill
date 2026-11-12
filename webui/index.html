@@ -37,6 +37,23 @@ pre.err{color:var(--err);margin-top:8px}
 .badge{display:inline-block;font-size:11px;font-weight:600;padding:1px 8px;border-radius:99px;border:1px solid currentColor}
 .badge.ok{color:var(--ok)}.badge.bad{color:var(--bad)}.badge.warn{color:var(--mute)}
 .note{font-size:12px;color:var(--mute);margin-top:8px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 8px}
+.bar input[type=text]{min-width:200px;flex:1}
+.chip{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;background:var(--bg);border:1px solid var(--line);color:var(--ink);cursor:pointer;font-family:inherit}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.chip.tk{color:var(--accent);border-color:var(--accent);cursor:default;background:none}
+.chip.tag-earnings{color:#b54708;border-color:#b54708}.chip.tag-deal{color:#175cd3;border-color:#175cd3}.chip.tag-people{color:#6941c6;border-color:#6941c6}
+@media (prefers-color-scheme:dark){.chip.tag-earnings{color:#fdb022;border-color:#fdb022}.chip.tag-deal{color:#84caff;border-color:#84caff}.chip.tag-people{color:#b692f6;border-color:#b692f6}}
+.news{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.item{border:1px solid var(--line);border-left:3px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--bg)}
+.item.is-new{border-left-color:var(--accent)}
+.item .meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mute);margin-bottom:4px}
+.item a.t{color:var(--ink);font-weight:600;font-size:14.5px;text-decoration:none}
+.item a.t:hover{text-decoration:underline;color:var(--accent)}
+.item .sum{margin:5px 0 0;color:var(--mute);font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.item .sum.open{-webkit-line-clamp:unset}
+.item .more{background:none;border:0;color:var(--accent);padding:0;margin-top:3px;cursor:pointer;font:inherit;font-size:12px}
+details.raw{margin-top:10px}details.raw summary{cursor:pointer;color:var(--mute);font-size:12px}
 .files button{margin:0 6px 6px 0;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px}nav h2{width:100%;margin:6px 4px 0}nav button{width:auto}.ua input{width:100%}}
 </style>
@@ -107,6 +124,7 @@ async function run(c){
     const d = await r.json();
     if (!r.ok) { $('#result').innerHTML = '<pre class="err">' + esc(d.error || 'error') + '</pre>'; return; }
     $('#cmdline').textContent = '$ ' + d.command;
+    if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     $('#result').innerHTML =
       '<span class="badge ' + (d.code === 0 ? 'ok' : d.code === 1 ? 'warn' : 'bad') + '">exit ' + d.code + '</span> ' +
       '<span class="sub">' + d.seconds + 's' + (d.code === 1 ? ' · exit 1 is a result for several tools (market closed, order blocked, nothing to do): read the output' : '') + '</span>' +
@@ -116,6 +134,59 @@ async function run(c){
   } catch (e) {
     $('#result').innerHTML = '<pre class="err">' + esc(e) + '</pre>';
   } finally { btn.disabled = false; btn.textContent = 'Run'; }
+}
+
+function ago(iso){
+  const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (isNaN(m)) return '';
+  if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60); if (h < 24) return h + ' h ago';
+  return Math.round(h / 24) + ' d ago';
+}
+function safeUrl(u){ return /^https?:\/\//i.test(u || '') ? u : ''; }
+
+function renderNews(d){
+  const data = JSON.parse(d.stdout);
+  const items = data.items || [], notes = data.notes || [];
+  const tickers = [...new Set(items.map(i => i.ticker))];
+  const tags = [...new Set(items.flatMap(i => i.tags || []))];
+  const state = {q: '', tag: '', ticker: '', kind: ''};
+  const kinds = [...new Set(items.map(i => i.kind))];
+  $('#result').innerHTML =
+    '<div class="sub">' + items.length + ' items · checked ' + esc(new Date(data.checked).toLocaleString()) + '</div>' +
+    '<div class="bar"><input type="text" id="nq" placeholder="Filter headlines…" autocomplete="off">' +
+    (tickers.length > 1 ? tickers.map(t => '<button type="button" class="chip" data-k="ticker" data-v="' + esc(t) + '">' + esc(t) + '</button>').join('') : '') +
+    tags.map(t => '<button type="button" class="chip tag-' + esc(t) + '" data-k="tag" data-v="' + esc(t) + '">' + esc(t) + '</button>').join('') +
+    (kinds.length > 1 ? kinds.map(t => '<button type="button" class="chip" data-k="kind" data-v="' + esc(t) + '">' + esc(t) + '</button>').join('') : '') +
+    '</div><ul class="news" id="nl"></ul>' +
+    notes.map(n => '<div class="note">' + esc(n) + '</div>').join('') +
+    '<div class="note">Headlines are leads, not facts. Open the story before acting. Not financial advice.</div>' +
+    '<details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>';
+  const draw = () => {
+    const q = state.q.toLowerCase();
+    const rows = items.filter(i => (!q || (i.title + ' ' + (i.summary || '')).toLowerCase().includes(q)) &&
+      (!state.tag || (i.tags || []).includes(state.tag)) && (!state.ticker || i.ticker === state.ticker) &&
+      (!state.kind || i.kind === state.kind));
+    $('#nl').innerHTML = rows.length ? rows.map((i, n) => {
+      const url = safeUrl(i.link);
+      return '<li class="item' + (i.new ? ' is-new' : '') + '"><div class="meta">' +
+        '<span class="chip tk">' + esc(i.ticker) + '</span>' +
+        (i.kind && i.kind !== 'headline' ? '<span class="chip tk">' + esc(i.kind) + '</span>' : '') +
+        (i.tags || []).map(t => '<span class="chip tag-' + esc(t) + '">' + esc(t) + '</span>').join('') +
+        '<span>' + esc(i.source || '') + '</span><span title="' + esc(i.time) + '">· ' + esc(ago(i.time)) + '</span></div>' +
+        (url ? '<a class="t" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(i.title) + '</a>' : '<span class="t">' + esc(i.title) + '</span>') +
+        (i.summary ? '<p class="sum" id="s' + n + '">' + esc(i.summary) + '</p><button type="button" class="more" data-s="s' + n + '">more</button>' : '') + '</li>';
+    }).join('') : '<li class="note">Nothing matches.</li>';
+  };
+  $('#nq').addEventListener('input', e => { state.q = e.target.value; draw(); });
+  $('#result').addEventListener('click', e => {
+    const c = e.target.closest('.chip[data-k]');
+    if (c) { const k = c.dataset.k, v = c.dataset.v; state[k] = state[k] === v ? '' : v;
+      document.querySelectorAll('.chip[data-k="' + k + '"]').forEach(x => x.classList.toggle('on', state[k] === x.dataset.v)); draw(); }
+    const m = e.target.closest('.more');
+    if (m) { const s = document.getElementById(m.dataset.s); const open = s.classList.toggle('open'); m.textContent = open ? 'less' : 'more'; }
+  });
+  draw();
 }
 
 async function showFiles(){
