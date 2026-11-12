@@ -141,6 +141,7 @@ def main(argv=None):
     ap.add_argument("--window", type=int, default=10, help="bars an order stays working")
     ap.add_argument("--hold", type=int, default=20, help="max bars to hold a trade")
     ap.add_argument("--cost", type=float, default=0.5, help="round-trip cost in $ per ounce")
+    ap.add_argument("--json", action="store_true", help="structured output for the web view")
     args = ap.parse_args(argv)
     if not (1 <= args.window <= 60 and 1 <= args.hold <= 120 and 0 <= args.cost <= 50):
         raise SystemExit("error: window 1-60, hold 1-120, cost 0-50")
@@ -221,7 +222,58 @@ def main(argv=None):
     add("Backtests overstate what you can capture: delayed Yahoo bars, no slippage beyond the flat cost, no margin")
     add("or contract-roll effects, and the rules were looked at on this same history. Past results do not predict")
     add("future ones. This is not financial advice.")
-    print("\n".join(L))
+    if not args.json:
+        print("\n".join(L))
+        return 0
+
+    import json
+
+    def js(rs):
+        s = stats(rs)
+        if not s:
+            return None
+        return dict(n=s["n"], win=s["win"], avg=s["avg"],
+                    ci=None if s["se"] != s["se"] else 1.96 * s["se"],
+                    pf=None if s["pf"] == float("inf") else s["pf"], streak=s["streak"])
+
+    names = ("LONG on a pullback", "LONG on a breakout", "SHORT on a rally into resistance", "SHORT on a breakdown")
+    pool1 = [x for x in trades if x["r1"] is not None]
+    pool2 = [x for x in trades if x["r2"] is not None]
+    cum, cumw, curve = 0.0, 0.0, []
+    for x in trades:
+        cum += x["r1"]
+        if x["trend"] == "with":
+            cumw += x["r1"]
+        curve.append(dict(t=x["t"], r=cum, w=cumw))
+    edges = [(-9e9, -0.75, "stopped (-1R)"), (-0.75, -0.25, "-0.5R"), (-0.25, 0.25, "about 0"), (0.25, 0.75, "+0.5R"),
+             (0.75, 1.5, "+1R"), (1.5, 3, "+2R"), (3, 9e9, "+3R or more")]
+    hist = [dict(label=lab, n=sum(1 for x in pool1 if lo <= x["r1"] < hi)) for lo, hi, lab in edges]
+    groups = [dict(label=lab, stats=js([x["r1"] for x in pool1 if f(x)])) for lab, f in (
+        ("with the trend", lambda x: x["trend"] == "with"),
+        ("against the trend", lambda x: x["trend"] == "counter"),
+        ("no clear trend", lambda x: x["trend"] == "range"),
+        ("zone with 2+ agreeing levels", lambda x: not x["weak"]),
+        ("weak zone (1 level)", lambda x: x["weak"]),
+        ("planned reward 1.5R or more", lambda x: x["planned_rr"] >= 1.5),
+        ("planned reward under 1.5R", lambda x: x["planned_rr"] < 1.5))]
+    data = dict(
+        meta=dict(symbol=args.symbol, first=first, last=lastd, bars=len(bars) - WARMUP, window=args.window,
+                  hold=args.hold, cost=args.cost, buy_hold=bh, trades=len(trades), t0=trades[0]["t"] if trades else None,
+                  t1=trades[-1]["t"] if trades else None),
+        setups=[dict(name=n, r1=js([x["r1"] for x in pool1 if x["name"] == n]),
+                     r2=js([x["r2"] for x in pool2 if x["name"] == n])) for n in names],
+        all=dict(r1=js([x["r1"] for x in pool1]), r2=js([x["r2"] for x in pool2])),
+        groups=groups,
+        side_trend=[dict(side=side.lower(), trend=tr, stats=js([x["r1"] for x in pool1
+                                                                if x["name"].startswith(side) and x["trend"] == tr]))
+                    for side in ("LONG", "SHORT") for tr in ("with", "counter", "range")],
+        halves=[dict(label="First half", span="%s to %s" % (first, day(trades[len(trades) // 2]["t"]) if trades else ""),
+                     stats=js([x["r1"] for x in trades if x["i"] < mid])),
+                dict(label="Second half", span="%s to %s" % (day(trades[len(trades) // 2]["t"]) if trades else "", lastd),
+                     stats=js([x["r1"] for x in trades if x["i"] >= mid]))],
+        baseline=dict(long=js(base["long"]), short=js(base["short"])),
+        curve=curve, hist=hist, report="\n".join(L))
+    print(json.dumps(data, allow_nan=False))
     return 0
 
 

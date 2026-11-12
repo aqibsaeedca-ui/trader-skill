@@ -56,7 +56,7 @@ COMMANDS = [
     dict(id="gold-backtest", group="Gold", title="Gold backtest",
          help="Replays the short-term setups day by day on past gold prices (no look-ahead) and shows win rate, "
               "average R, stability and a no-zone baseline. Takes a few seconds.",
-         script="webui/gold_backtest.py", fixed=[],
+         script="webui/gold_backtest.py", fixed=["--json"], view="backtest",
          params=[P("symbol", "Contract", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
                  P("years", "History", "select", "10y", "--years", choices=["10y", "5y", "2y"]),
                  P("window", "Order stays working (bars)", "number", "10", "--window"),

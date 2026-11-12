@@ -104,6 +104,39 @@ table.snap th,table.snap td{text-align:left;padding:6px 8px;border-bottom:1px so
 table.snap th{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
 td.hot{background:rgba(11,107,79,.14);font-weight:600}
 .bar .chip{font-size:12px;padding:5px 12px}
+.bt-verdict{border:2px solid var(--line);border-radius:12px;padding:14px 16px;margin:12px 0;background:var(--bg)}
+.bt-verdict.neutral{border-color:var(--mute)}.bt-verdict.good{border-color:var(--ok)}.bt-verdict.bad{border-color:var(--bad)}
+.bt-verdict .big{font-size:22px;font-weight:800;margin-bottom:4px}
+.bt-verdict.good .big{color:var(--ok)}.bt-verdict.bad .big{color:var(--bad)}
+.bt-verdict ul{margin:6px 0 0;padding-left:18px}.bt-verdict li{margin:3px 0}
+.bt-h{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute);margin:20px 0 4px}
+.bt-sub{font-size:12.5px;color:var(--mute);margin:0 0 8px}
+.bt-chart{width:100%;height:auto;display:block;background:var(--bg);border:1px solid var(--line);border-radius:10px}
+.bt-chart text{fill:var(--mute);font-size:11px;font-family:inherit}
+.bt-chart .grid{stroke:var(--line);stroke-width:1}
+.bt-chart .zero{stroke:var(--mute);stroke-width:1.2;stroke-dasharray:4 3}
+.bt-chart .l-all{stroke:var(--ink);fill:none;stroke-width:2}
+.bt-chart .l-with{stroke:var(--accent);fill:none;stroke-width:2}
+.bt-chart .tx-all{fill:var(--ink);font-weight:700}.bt-chart .tx-with{fill:var(--accent);font-weight:700}
+.rb{display:grid;grid-template-columns:200px 1fr 190px;gap:10px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)}
+.rb .rl{font-size:13px}.rb .rv{font-size:13px;font-weight:700}
+.rb svg{width:100%;height:22px}
+.rb .zline{stroke:var(--mute);stroke-width:1}
+.rb .pos .bar2{fill:var(--ok)}.rb .neg .bar2{fill:var(--bad)}.rb .unk .bar2{fill:var(--mute);opacity:.55}
+.rb .wk{stroke:var(--ink);stroke-width:1.6}
+.rb .empty{font-size:12px;color:var(--mute)}
+.bt-legend{font-size:12px;color:var(--mute);margin-top:6px}
+.bt-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px}
+.heat{display:grid;grid-template-columns:90px repeat(3,1fr);gap:6px;align-items:stretch}
+.heat .hh{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em;align-self:end}
+.heat .hr{font-weight:700;align-self:center}
+.tile2{border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;min-height:68px}
+.tile2 .a{font-size:20px;font-weight:800}.tile2 .n{font-size:11.5px;color:var(--mute)}
+.hist{display:flex;gap:8px;align-items:flex-end;height:150px;border-bottom:1px solid var(--mute);padding:0 4px}
+.hist .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;font-size:11px;color:var(--mute)}
+.hist .col b{display:block;width:100%;border-radius:4px 4px 0 0}
+.hist-l{display:flex;gap:8px;padding:4px 4px 0}.hist-l span{flex:1;text-align:center;font-size:11px;color:var(--mute)}
+@media (max-width:760px){.rb{grid-template-columns:1fr}.heat{grid-template-columns:70px repeat(3,1fr)}}
 @media (max-width:760px){.lad{grid-template-columns:1fr 60px 60px}.lad .sig{grid-column:1/-1}}
 .files button{margin:0 6px 6px 0;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
 @media (max-width:760px){.wrap{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px}nav h2{width:100%;margin:6px 4px 0}nav button{width:auto}.ua input{width:100%}}
@@ -180,6 +213,7 @@ async function run(c){
     $('#cmdline').textContent = '$ ' + d.command;
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
+    if (d.view === 'backtest' && d.code === 0) { try { return renderBacktest(d); } catch (e) { console.error(e); } }
     $('#result').innerHTML =
       '<span class="badge ' + (d.code === 0 ? 'ok' : d.code === 1 ? 'warn' : 'bad') + '">exit ' + d.code + '</span> ' +
       '<span class="sub">' + d.seconds + 's' + (d.code === 1 ? ' · exit 1 is a result for several tools (market closed, order blocked, nothing to do): read the output' : '') + '</span>' +
@@ -345,6 +379,124 @@ function renderGold(d){
     tabs.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     $('#gsec').innerHTML = sectionHtml(b.dataset.t);
   });
+}
+
+function renderBacktest(d){
+  const b = JSON.parse(d.stdout), m = b.meta, A = b.all.r1;
+  const R = (v, dp = 2) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(dp) + 'R';
+  const day = t => new Date(t * 1000).toISOString().slice(0, 10);
+
+  // ---- verdict, in plain words
+  const lo = A.avg - A.ci, hi = A.avg + A.ci;
+  const kind = lo > 0 ? 'good' : hi < 0 ? 'bad' : 'neutral';
+  const head = kind === 'good' ? 'Positive on this history' : kind === 'bad' ? 'Loses money after costs' : 'No reliable edge';
+  const why = kind === 'good'
+    ? 'Average ' + R(A.avg) + ' per trade, and the whole uncertainty band (' + R(lo) + ' to ' + R(hi) + ') is above zero. Promising, but a backtest is not proof.'
+    : kind === 'bad'
+    ? 'Average ' + R(A.avg) + ' per trade, and the whole band (' + R(lo) + ' to ' + R(hi) + ') is below zero.'
+    : 'Average ' + R(A.avg) + ' per trade. The band (' + R(lo) + ' to ' + R(hi) + ') includes zero, so the result cannot be told apart from luck.';
+  const v = [];
+  const h1 = b.halves[0].stats, h2 = b.halves[1].stats;
+  if (h1 && h2) v.push('<b>Stability:</b> first half of the history ' + R(h1.avg) + ', second half ' + R(h2.avg) + (Math.sign(h1.avg) !== Math.sign(h2.avg) ? ' — the sign flipped, a warning that it is not steady.' : '.'));
+  const w = b.groups[0].stats, c = b.groups[1].stats;
+  if (w && c) v.push('<b>Trend filter:</b> trades with the trend averaged ' + R(w.avg) + ', against the trend ' + R(c.avg) + '.');
+  const bl = b.baseline.long, bs = b.baseline.short;
+  if (bl && bs) v.push('<b>Versus noise:</b> entering at random with no zones made ' + R(bl.avg) + ' (long) and ' + R(bs.avg) + ' (short). Gold rose ' + Math.round(m.buy_hold) + '% over the span, so long trades had a tailwind.');
+  v.push('<b>Cost of trading:</b> $' + m.cost.toFixed(2) + ' per ounce is charged on every trade. Trades overlap in time, so the band is on the optimistic side.');
+
+  const kpi = (k, val, sub) => '<div class="g-tile"><div class="k">' + k + '</div><div class="v">' + val + '</div><div class="s">' + sub + '</div></div>';
+  const kpis = '<div class="g-tiles">' +
+    kpi('Trades', A.n, m.first + ' to ' + m.last) +
+    kpi('Win rate', Math.round(A.win) + '%', 'a win = any profit') +
+    kpi('Average per trade', R(A.avg), '± ' + A.ci.toFixed(2) + 'R (95% band)') +
+    kpi('Profit factor', A.pf == null ? '∞' : A.pf.toFixed(2), 'wins ÷ losses; 1.0 = break-even') +
+    kpi('Worst losing streak', A.streak, 'trades in a row') + '</div>';
+
+  // ---- equity curve (cumulative R)
+  function equity(){
+    const cv = b.curve; if (cv.length < 2) return '';
+    const W = 680, H = 250, L = 44, Rr = 78, T = 12, B = 26;
+    const ys = cv.flatMap(p => [p.r, p.w]).concat([0]);
+    let y0 = Math.min(...ys), y1 = Math.max(...ys); const pad = (y1 - y0) * 0.08 || 1; y0 -= pad; y1 += pad;
+    const step = [1, 2, 5, 10, 20, 25, 50, 100].find(s => (y1 - y0) / s <= 6) || 100;
+    const X = i => L + i / (cv.length - 1) * (W - L - Rr), Y = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+    let g = '';
+    for (let t = Math.ceil(y0 / step) * step; t <= y1; t += step)
+      g += '<line class="' + (t === 0 ? 'zero' : 'grid') + '" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(t) + '" y2="' + Y(t) + '"/><text x="' + (L - 6) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + t + 'R</text>';
+    const path = k => cv.map((p, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p[k]).toFixed(1)).join(' ');
+    const last = cv[cv.length - 1];
+    const dates = [0, Math.floor(cv.length / 2), cv.length - 1].map(i => '<text x="' + X(i) + '" y="' + (H - 8) + '" text-anchor="' + (i === 0 ? 'start' : i === cv.length - 1 ? 'end' : 'middle') + '">' + day(cv[i].t) + '</text>').join('');
+    return '<svg class="bt-chart" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Cumulative result in R over time">' + g +
+      '<path class="l-all" d="' + path('r') + '"/><path class="l-with" d="' + path('w') + '"/>' +
+      '<text class="tx-all" x="' + (X(cv.length - 1) + 6) + '" y="' + (Y(last.r) + (last.r > last.w ? -4 : 12)) + '">All ' + R(last.r, 0) + '</text>' +
+      '<text class="tx-with" x="' + (X(cv.length - 1) + 6) + '" y="' + (Y(last.w) + (last.w >= last.r ? -4 : 12)) + '">With trend ' + R(last.w, 0) + '</text>' + dates + '</svg>' +
+      '<div class="bt-legend"><i style="background:var(--ink)"></i>every setup<i style="background:var(--accent)"></i>only trades with the trend</div>';
+  }
+
+  // ---- average-R bars with an uncertainty whisker
+  function rbars(rows){
+    const D = 1.2, X = v => (Math.max(-D, Math.min(D, v)) + D) / (2 * D) * 300;
+    return rows.map(r => {
+      const s = r.stats;
+      if (!s) return '<div class="rb"><div class="rl">' + esc(r.label) + '</div><div class="empty">no trades</div><div></div></div>';
+      const l = s.avg - s.ci, h = s.avg + s.ci, cls = l > 0 ? 'pos' : h < 0 ? 'neg' : 'unk';
+      const x0 = X(0), x1 = X(s.avg);
+      return '<div class="rb"><div class="rl">' + esc(r.label) + (r.sub ? '<div class="sub">' + esc(r.sub) + '</div>' : '') + '</div>' +
+        '<svg viewBox="0 0 300 22" class="' + cls + '" preserveAspectRatio="none"><line class="zline" x1="150" x2="150" y1="0" y2="22"/>' +
+        '<rect class="bar2" x="' + Math.min(x0, x1).toFixed(1) + '" y="5" width="' + Math.max(1.5, Math.abs(x1 - x0)).toFixed(1) + '" height="12" rx="2"/>' +
+        '<line class="wk" x1="' + X(l).toFixed(1) + '" x2="' + X(h).toFixed(1) + '" y1="11" y2="11"/>' +
+        '<line class="wk" x1="' + X(l).toFixed(1) + '" x2="' + X(l).toFixed(1) + '" y1="6" y2="16"/><line class="wk" x1="' + X(h).toFixed(1) + '" x2="' + X(h).toFixed(1) + '" y1="6" y2="16"/></svg>' +
+        '<div class="rv">' + R(s.avg) + ' <span class="sub">' + Math.round(s.win) + '% win · ' + s.n + ' trades</span></div></div>';
+    }).join('') + '<div class="bt-legend">Bar = average result per trade (centre line = break-even). Whisker = 95% uncertainty.' +
+      '<i style="background:var(--ok)"></i>clearly profitable<i style="background:var(--bad)"></i>clearly losing<i style="background:var(--mute)"></i>whisker crosses zero: can\'t tell from luck</div>';
+  }
+
+  // ---- side x trend heat tiles
+  function heat(){
+    const sides = ['long', 'short'], trs = [['with', 'with the trend'], ['counter', 'against the trend'], ['range', 'no clear trend']];
+    let h = '<div class="heat"><div></div>' + trs.map(t => '<div class="hh">' + t[1] + '</div>').join('');
+    sides.forEach(sd => {
+      h += '<div class="hr">' + sd.toUpperCase() + '</div>';
+      trs.forEach(t => {
+        const s = (b.side_trend.find(x => x.side === sd && x.trend === t[0]) || {}).stats;
+        if (!s) { h += '<div class="tile2"><div class="n">no trades</div></div>'; return; }
+        const a = Math.min(0.55, Math.abs(s.avg) / 0.8 * 0.55);
+        const bg = s.avg >= 0 ? 'rgba(11,107,79,' + a.toFixed(2) + ')' : 'rgba(180,35,24,' + a.toFixed(2) + ')';
+        h += '<div class="tile2" style="background:' + bg + '"><div class="a">' + R(s.avg) + '</div><div class="n">' + s.n + ' trades · ' + Math.round(s.win) + '% win' + (s.n < 30 ? ' · small sample' : '') + '</div></div>';
+      });
+    });
+    return h + '</div>';
+  }
+
+  // ---- outcome histogram
+  function histo(){
+    const mx = Math.max(...b.hist.map(x => x.n), 1);
+    return '<div class="hist">' + b.hist.map((x, i) => '<div class="col">' + x.n + '<b style="height:' + Math.max(2, x.n / mx * 105) + 'px;background:' + (i < 2 ? 'var(--bad)' : i === 2 ? 'var(--mute)' : 'var(--ok)') + '"></b></div>').join('') + '</div>' +
+      '<div class="hist-l">' + b.hist.map(x => '<span>' + esc(x.label) + '</span>').join('') + '</div>';
+  }
+
+  const setupRows = b.setups.map(s => ({label: FRIENDLY[s.name] || s.name, stats: s.r1}));
+  const baseRows = [
+    {label: 'These setups (all)', stats: A},
+    {label: 'Random long entries', sub: 'no zones, same exits', stats: b.baseline.long},
+    {label: 'Random short entries', sub: 'no zones, same exits', stats: b.baseline.short}];
+  const grpRows = b.groups.map(g => ({label: g.label, stats: g.stats}));
+  const halfRows = b.halves.map(h => ({label: h.label, sub: h.span, stats: h.stats}));
+  const fmtp = t => t[0].toUpperCase() + t.slice(1);
+
+  $('#result').innerHTML =
+    '<div class="bt-verdict ' + kind + '"><div class="big">' + head + '</div><div>' + why + '</div><ul>' + v.map(x => '<li>' + x + '</li>').join('') + '</ul></div>' +
+    kpis +
+    '<div class="bt-h">1 · Running result</div><p class="bt-sub">Cumulative profit in R (1R = the amount risked on a trade) as each trade closed. Up and steady is good; flat or falling means no edge.</p>' + equity() +
+    '<div class="bt-h">2 · Which setup worked?</div><p class="bt-sub">Exit at the first target.</p>' + rbars(setupRows) +
+    '<div class="bt-h">3 · Side and trend</div><p class="bt-sub">Green = made money, red = lost. Longs had a bull-market tailwind; most shorts were against the trend.</p>' + heat() +
+    '<div class="bt-h">4 · What separates good trades from bad</div>' + rbars(grpRows) +
+    '<div class="bt-h">5 · Does it hold up over time?</div><p class="bt-sub">The same rules, first half of history versus second half.</p>' + rbars(halfRows) +
+    '<div class="bt-h">6 · Does it beat doing nothing clever?</div><p class="bt-sub">Entering every time with no zones, same exits and costs. A strategy must beat this by more than its whisker.</p>' + rbars(baseRows) +
+    '<div class="bt-h">7 · How trades ended</div><p class="bt-sub">Most trades end at the stop (−1R); winners are fewer but larger. ' + b.hist.reduce((a, x) => a + x.n, 0) + ' trades.</p>' + histo() +
+    '<div class="note">Rules: ' + m.window + '-bar working orders, trades held at most ' + m.hold + ' bars, stop checked before target on the same bar, gaps through a stop exit at the open, $' + m.cost.toFixed(2) + '/oz cost. ' +
+    'Delayed Yahoo daily bars; the rules were developed looking at this same history. Past results do not predict future ones. Not financial advice.</div>' +
+    '<details class="raw"><summary>Full text report</summary><pre>' + esc(b.report) + '</pre></details>';
 }
 
 function renderNews(d){
