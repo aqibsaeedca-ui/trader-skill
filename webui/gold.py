@@ -39,9 +39,9 @@ def fetch_bars(symbol, years="2y", interval="1d"):
     except (KeyError, IndexError, TypeError):
         raise SystemExit("error: Yahoo returned no data for %s" % symbol)
     bars = []
-    for t, h, l, c in zip(ts, q["high"], q["low"], q["close"]):
-        if None not in (h, l, c):
-            bars.append((t, float(h), float(l), float(c)))
+    for t, h, l, c, o in zip(ts, q["high"], q["low"], q["close"], q["open"]):
+        if None not in (h, l, c, o):
+            bars.append((t, float(h), float(l), float(c), float(o)))   # index 4 = open
     return bars, res.get("meta", {})
 
 
@@ -52,7 +52,7 @@ def sma(vals, n):
 def atr(bars, n=14):
     trs = []
     for i in range(1, len(bars)):
-        _, h, l, _ = bars[i]
+        h, l = bars[i][1], bars[i][2]
         pc = bars[i - 1][3]
         trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     return sum(trs[-n:]) / n if len(trs) >= n else None
@@ -207,7 +207,8 @@ def size_text(entry, stop, args, symbol):
     return s
 
 
-def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, step, args, symbol):
+def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step):
+    """Zones and the four scenarios, using only the bars given (no look-ahead)."""
     last = bars[-1][3]
     atr_v = atr(bars)
     levels = [(p, lab) for _, lab, p in swings(bars[-fib_window:], k)]
@@ -229,6 +230,38 @@ def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, s
         return zs[0] if zs else None
     bsup, bres = best(sup), best(res)
     bias = {4: "bullish", 3: "bullish", 2: "neutral", 1: "bearish", 0: "bearish"}[trend_pts]
+
+    def trend_of(side):
+        if bias == "neutral":
+            return "range"
+        return "with" if (side == "long") == (bias == "bullish") else "counter"
+
+    setups = []
+
+    def setup(name, side, kind, level, stop, targets, z):
+        setups.append(dict(name=name, side=side, kind=kind, level=level, stop=stop, targets=targets,
+                           trend=trend_of(side), weak=z["n"] < 2, zone=z))
+
+    if bsup:
+        z = bsup
+        setup("LONG on a pullback", "long", "pullback", z["mid"], z["lo"] - 0.5 * atr_v,
+              [r["mid"] for r in res[:2]], z)
+    if bres:
+        z = bres
+        setup("LONG on a breakout", "long", "breakout", z["hi"] + 0.25 * atr_v, z["lo"] - 0.25 * atr_v,
+              [r["mid"] for r in res if r["mid"] > z["mid"]][:1], z)
+        setup("SHORT on a rally into resistance", "short", "pullback", z["mid"], z["hi"] + 0.5 * atr_v,
+              [s["mid"] for s in sup[:2]], z)
+    if bsup:
+        z = bsup
+        setup("SHORT on a breakdown", "short", "breakout", z["lo"] - 0.25 * atr_v, z["hi"] + 0.25 * atr_v,
+              [s["mid"] for s in sup if s["mid"] < z["mid"]][:1], z)
+    return dict(last=last, atr=atr_v, bias=bias, sup=sup, res=res, setups=setups)
+
+
+def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, step, args, symbol):
+    c = compute_setups(bars, trend_pts, k, fib_window, extra_levels, step)
+    last, atr_v, bias, sup, res = c["last"], c["atr"], c["bias"], c["sup"], c["res"]
     L = []
     add = L.append
     add(title)
@@ -245,55 +278,36 @@ def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, s
         add("    none found within 15%")
     add("")
     add("  Scenarios (conditions, not predictions; act only if price actually gets there and you agree):")
-
-    def scen(name, side, entry_txt, entry, stop, targets, note):
-        add("   - %s%s" % (name, "  [" + note + "]" if note else ""))
-        add("       %s" % entry_txt)
-        add("       Invalidation (stop)  %s   |   risk per oz %s" % (fmt(stop, 0, "$"), fmt(abs(entry - stop), 0, "$")))
-        add("       Targets              %s" % rr_text(entry, stop, targets))
-        sz = size_text(entry, stop, args, symbol)
+    note_for = {"with": "with the trend", "counter": "counter-trend, higher risk", "range": "range / no clear trend"}
+    for s in c["setups"]:
+        z = s["zone"]
+        note = "; ".join(n for n in (note_for[s["trend"]], "weak zone, 1 level" if s["weak"] else "") if n)
+        add("   - %s%s" % (s["name"], "  [" + note + "]" if note else ""))
+        if s["kind"] == "pullback":
+            who = "buyers " if s["side"] == "long" else "sellers"
+            add("       Zone to watch for %s  %s - %s" % (who, fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")))
+        else:
+            add("       Trigger: %s close %s %s" % (unit, "above" if s["side"] == "long" else "below", fmt(s["level"], 0, "$")))
+        add("       Invalidation (stop)  %s   |   risk per oz %s" % (fmt(s["stop"], 0, "$"), fmt(abs(s["level"] - s["stop"]), 0, "$")))
+        add("       Targets              %s" % rr_text(s["level"], s["stop"], s["targets"]))
+        sz = size_text(s["level"], s["stop"], args, symbol)
         if sz:
             add("       Size                 %s" % sz)
-
-    def tag(side):
-        if bias == "neutral":
-            return "range / no clear trend"
-        return "with the trend" if (side == "long") == (bias == "bullish") else "counter-trend, higher risk"
-
-    def weak(z):
-        return "weak zone, 1 level" if z["n"] < 2 else ""
-
-    def join(*notes):
-        return "; ".join(n for n in notes if n)
-
-    def beyond(zs, z):
-        return [x["mid"] for x in zs if x is not z]
-
-    if bsup:
-        z = bsup
-        entry, stop = z["mid"], z["lo"] - 0.5 * atr_v
-        scen("LONG on a pullback", "long",
-             "Zone to watch for buyers   %s - %s" % (fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")),
-             entry, stop, [r["mid"] for r in res[:2]], join(tag("long"), weak(z)))
-    if bres:
-        z = bres
-        trig = z["hi"] + 0.25 * atr_v
-        stop = z["lo"] - 0.25 * atr_v
-        scen("LONG on a breakout", "long",
-             "Trigger: %s close above %s" % (unit, fmt(trig, 0, "$")),
-             trig, stop, [r["mid"] for r in res if r["mid"] > z["mid"]][:1], join(tag("long"), weak(z)))
-        entry, stop = z["mid"], z["hi"] + 0.5 * atr_v
-        scen("SHORT on a rally into resistance", "short",
-             "Zone to watch for sellers  %s - %s" % (fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")),
-             entry, stop, [s["mid"] for s in sup[:2]], join(tag("short"), weak(z)))
-    if bsup:
-        z = bsup
-        trig = z["lo"] - 0.25 * atr_v
-        stop = z["hi"] + 0.25 * atr_v
-        scen("SHORT on a breakdown", "short",
-             "Trigger: %s close below %s" % (unit, fmt(trig, 0, "$")),
-             trig, stop, [s["mid"] for s in sup if s["mid"] < z["mid"]][:1], join(tag("short"), weak(z)))
     return L
+
+
+def short_term_inputs(daily):
+    """Trend points, 120-bar window and extra levels for the daily scenarios."""
+    closes = [b[3] for b in daily]
+    last = closes[-1]
+    s20, s50, s200 = sma(closes, 20), sma(closes, 50), sma(closes, 200)
+    pts = sum([last > s20, last > s50, last > s200, s50 > s200]) if None not in (s20, s50, s200) else 0
+    wk = daily[-6:-1]                      # prior 5 sessions as the "week"
+    H, Lo, C = max(b[1] for b in wk), min(b[2] for b in wk), wk[-1][3]
+    P = (H + Lo + C) / 3
+    extra = [(P, "weekly pivot"), (2 * P - Lo, "pivot R1"), (2 * P - H, "pivot S1"),
+             (s20, "20d avg"), (s50, "50d avg")]
+    return daily[-120:], pts, [(p, l) for p, l in extra if p]
 
 
 def zones_report(symbol, daily, a, args):
@@ -305,14 +319,8 @@ def zones_report(symbol, daily, a, args):
     if None not in (s20, s50, s200):
         pts = sum([last > s20, last > s50, last > s200, s50 > s200])
     if args.horizon in ("short", "both"):
-        win = daily[-120:]
-        wk = daily[-6:-1]                      # prior 5 sessions as the "week"
-        H, Lo, C = max(b[1] for b in wk), min(b[2] for b in wk), wk[-1][3]
-        P = (H + Lo + C) / 3
-        extra = [(P, "weekly pivot"), (2 * P - Lo, "pivot R1"), (2 * P - H, "pivot S1"),
-                 (s20, "20d avg"), (s50, "50d avg")]
-        extra = [(p, l) for p, l in extra if p]
-        out += horizon_section("SHORT-TERM ZONES (daily chart, days to a few weeks)", "daily", win, pts, 5, 120,
+        win, spts, extra = short_term_inputs(daily)
+        out += horizon_section("SHORT-TERM ZONES (daily chart, days to a few weeks)", "daily", win, spts, 5, 120,
                                extra, 100, args, symbol)
         out.append("")
     if args.horizon in ("long", "both"):

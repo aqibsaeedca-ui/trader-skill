@@ -50,6 +50,15 @@ COMMANDS = [
                  P("risk", "Risk per trade (%)", "number", "1", "--risk-pct"),
                  P("stop", "Stop distance ($/oz, blank = ATR based)", "number", "", "--stop"),
                  P("atr", "ATR multiple for the stop", "number", "2", "--atr-mult")]),
+    dict(id="gold-backtest", group="Gold", title="Gold backtest",
+         help="Replays the short-term setups day by day on past gold prices (no look-ahead) and shows win rate, "
+              "average R, stability and a no-zone baseline. Takes a few seconds.",
+         script="webui/gold_backtest.py", fixed=[],
+         params=[P("symbol", "Contract", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
+                 P("years", "History", "select", "10y", "--years", choices=["10y", "5y", "2y"]),
+                 P("window", "Order stays working (bars)", "number", "10", "--window"),
+                 P("hold", "Max bars held", "number", "20", "--hold"),
+                 P("cost", "Cost ($/oz round trip)", "number", "0.5", "--cost")]),
     # ---- copycat
     dict(id="copycat-find", group="Copycat", title="Find an investor",
          help="Look up a filer's CIK by name (Buffett, Burry, Ackman...).",
