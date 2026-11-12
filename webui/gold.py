@@ -21,9 +21,9 @@ UA = "trader-skill-gold/1.0 (+local research tool)"
 OUNCES = {"GC=F": 100, "MGC=F": 10, "XAUUSD=X": 1}
 
 
-def fetch_bars(symbol, years="2y"):
-    url = "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=1d" % (
-        urllib.parse.quote(symbol, safe="="), years)
+def fetch_bars(symbol, years="2y", interval="1d"):
+    url = "https://query1.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=%s" % (
+        urllib.parse.quote(symbol, safe="="), years, interval)
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     try:
         with urllib.request.urlopen(req, timeout=25) as r:
@@ -116,7 +116,217 @@ def trend_read(a):
     return "%s (%d of 4 checks bullish: price>20d, price>50d, price>200d, 50d>200d)" % (label, pts)
 
 
-def report(symbol, a, meta, args):
+# ---------------------------------------------------------------- trade zones
+
+def swings(bars, k):
+    """Fractal swing highs/lows: a bar whose high (low) beats k bars each side."""
+    out = []
+    for i in range(k, len(bars) - k):
+        h, l = bars[i][1], bars[i][2]
+        around = [j for j in range(i - k, i + k + 1) if j != i]
+        if all(h >= bars[j][1] for j in around):
+            out.append((i, "swing high", h))
+        if all(l <= bars[j][2] for j in around):
+            out.append((i, "swing low", l))
+    return out
+
+
+def fib_levels(bars):
+    """Retracements of the leg between the window's highest high and lowest low."""
+    hi_i = max(range(len(bars)), key=lambda i: bars[i][1])
+    lo_i = min(range(len(bars)), key=lambda i: bars[i][2])
+    hi, lo = bars[hi_i][1], bars[lo_i][2]
+    out = []
+    for r in (0.382, 0.5, 0.618):
+        price = hi - r * (hi - lo) if lo_i < hi_i else lo + r * (hi - lo)
+        out.append((price, "fib %s%%" % ("%g" % (r * 100))))
+    return out
+
+
+def make_zones(levels, tol, cap):
+    """Group nearby levels into zones (no wider than cap); more distinct levels = more confluence."""
+    zones = []
+    for price, label in sorted(levels):
+        if zones and price - zones[-1]["hi"] <= tol and price - zones[-1]["lo"] <= cap:
+            z = zones[-1]
+            z["hi"] = price
+            z["labels"].append(label)
+        else:
+            zones.append({"lo": price, "hi": price, "labels": [label]})
+    for z in zones:
+        z["mid"] = (z["lo"] + z["hi"]) / 2
+        z["n"] = len(set(z["labels"]))
+    return zones
+
+
+def split_zones(zones, last, count=3):
+    sup = sorted([z for z in zones if z["mid"] <= last], key=lambda z: -z["mid"])[:count]
+    res = sorted([z for z in zones if z["mid"] > last], key=lambda z: z["mid"])[:count]
+    return sup, res
+
+
+def zone_text(z, last, atr):
+    labels = sorted(set(z["labels"]))
+    shown = ", ".join(labels[:4]) + (" +%d" % (len(labels) - 4) if len(labels) > 4 else "")
+    rng = "%s - %s" % (fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")) if z["hi"] - z["lo"] >= 1 else fmt(z["mid"], 0, "$")
+    return "%-17s %s (%s)  %s from price, %.1f ATR   [%s]" % (
+        rng, "*" * min(z["n"], 5), "%d level%s" % (z["n"], "" if z["n"] == 1 else "s"),
+        fmt(pct(z["mid"], last), 1, suf="%"), abs(z["mid"] - last) / atr, shown)
+
+
+def rr_text(entry, stop, targets):
+    risk = abs(entry - stop)
+    parts = []
+    for t in targets:
+        r = abs(t - entry) / risk if risk else 0
+        parts.append("%s = %.1fR%s" % (fmt(t, 0, "$"), r, "" if r >= 1.5 else " (thin)"))
+    return ", ".join(parts) if parts else "no level found beyond"
+
+
+def size_text(entry, stop, args, symbol):
+    if not args.account:
+        return None
+    risk_usd = args.account * args.risk_pct / 100
+    oz = risk_usd / abs(entry - stop)
+    lot = OUNCES.get(symbol.upper())
+    s = "%s oz risks %s" % (fmt(oz, 1), fmt(risk_usd, 0, "$"))
+    if lot:
+        s += " (%.2f x %s; %d whole, %d micro)" % (oz / lot, symbol.upper(), int(oz // lot), int(oz // 10))
+        if oz < 10:
+            one = 10 * abs(entry - stop)
+            s += ". One micro (10 oz) would risk %s = %s of the account" % (fmt(one, 0, "$"), fmt(one / args.account * 100, 1, suf="%"))
+    return s
+
+
+def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, step, args, symbol):
+    last = bars[-1][3]
+    atr_v = atr(bars)
+    levels = [(p, lab) for _, lab, p in swings(bars[-fib_window:], k)]
+    levels += fib_levels(bars[-fib_window:])
+    levels += extra_levels
+    base = int(last // step) * step
+    for m in range(-3, 5):
+        levels.append((base + m * step, "round $%d" % (base + m * step)))
+    lo_b, hi_b = last * 0.85, last * 1.15
+    levels = [(p, l) for p, l in levels if lo_b <= p <= hi_b]
+    zones = make_zones(levels, 0.6 * atr_v, 1.2 * atr_v)
+    sup, res = split_zones(zones, last)
+
+    def best(zs):
+        """Nearest zone with at least two agreeing levels, else just the nearest."""
+        for z in zs:
+            if z["n"] >= 2:
+                return z
+        return zs[0] if zs else None
+    bsup, bres = best(sup), best(res)
+    bias = {4: "bullish", 3: "bullish", 2: "neutral", 1: "bearish", 0: "bearish"}[trend_pts]
+    L = []
+    add = L.append
+    add(title)
+    add("  Bias %s, 1 %s ATR = %s (%s of price). Price %s." % (bias, unit, fmt(atr_v, 0, "$"), fmt(atr_v / last * 100, 1, suf="%"), fmt(last, 2, "$")))
+    add("  Resistance zones above (more * = more levels agree):")
+    for z in reversed(res):
+        add("    " + zone_text(z, last, atr_v))
+    if not res:
+        add("    none found within 15%")
+    add("  Support zones below:")
+    for z in sup:
+        add("    " + zone_text(z, last, atr_v))
+    if not sup:
+        add("    none found within 15%")
+    add("")
+    add("  Scenarios (conditions, not predictions; act only if price actually gets there and you agree):")
+
+    def scen(name, side, entry_txt, entry, stop, targets, note):
+        add("   - %s%s" % (name, "  [" + note + "]" if note else ""))
+        add("       %s" % entry_txt)
+        add("       Invalidation (stop)  %s   |   risk per oz %s" % (fmt(stop, 0, "$"), fmt(abs(entry - stop), 0, "$")))
+        add("       Targets              %s" % rr_text(entry, stop, targets))
+        sz = size_text(entry, stop, args, symbol)
+        if sz:
+            add("       Size                 %s" % sz)
+
+    def tag(side):
+        if bias == "neutral":
+            return "range / no clear trend"
+        return "with the trend" if (side == "long") == (bias == "bullish") else "counter-trend, higher risk"
+
+    def weak(z):
+        return "weak zone, 1 level" if z["n"] < 2 else ""
+
+    def join(*notes):
+        return "; ".join(n for n in notes if n)
+
+    def beyond(zs, z):
+        return [x["mid"] for x in zs if x is not z]
+
+    if bsup:
+        z = bsup
+        entry, stop = z["mid"], z["lo"] - 0.5 * atr_v
+        scen("LONG on a pullback", "long",
+             "Zone to watch for buyers   %s - %s" % (fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")),
+             entry, stop, [r["mid"] for r in res[:2]], join(tag("long"), weak(z)))
+    if bres:
+        z = bres
+        trig = z["hi"] + 0.25 * atr_v
+        stop = z["lo"] - 0.25 * atr_v
+        scen("LONG on a breakout", "long",
+             "Trigger: %s close above %s" % (unit, fmt(trig, 0, "$")),
+             trig, stop, [r["mid"] for r in res if r["mid"] > z["mid"]][:1], join(tag("long"), weak(z)))
+        entry, stop = z["mid"], z["hi"] + 0.5 * atr_v
+        scen("SHORT on a rally into resistance", "short",
+             "Zone to watch for sellers  %s - %s" % (fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")),
+             entry, stop, [s["mid"] for s in sup[:2]], join(tag("short"), weak(z)))
+    if bsup:
+        z = bsup
+        trig = z["lo"] - 0.25 * atr_v
+        stop = z["hi"] + 0.25 * atr_v
+        scen("SHORT on a breakdown", "short",
+             "Trigger: %s close below %s" % (unit, fmt(trig, 0, "$")),
+             trig, stop, [s["mid"] for s in sup if s["mid"] < z["mid"]][:1], join(tag("short"), weak(z)))
+    return L
+
+
+def zones_report(symbol, daily, a, args):
+    out = []
+    pts = 0
+    closes = [b[3] for b in daily]
+    last = closes[-1]
+    s20, s50, s200 = a["sma20"], a["sma50"], a["sma200"]
+    if None not in (s20, s50, s200):
+        pts = sum([last > s20, last > s50, last > s200, s50 > s200])
+    if args.horizon in ("short", "both"):
+        win = daily[-120:]
+        wk = daily[-6:-1]                      # prior 5 sessions as the "week"
+        H, Lo, C = max(b[1] for b in wk), min(b[2] for b in wk), wk[-1][3]
+        P = (H + Lo + C) / 3
+        extra = [(P, "weekly pivot"), (2 * P - Lo, "pivot R1"), (2 * P - H, "pivot S1"),
+                 (s20, "20d avg"), (s50, "50d avg")]
+        extra = [(p, l) for p, l in extra if p]
+        out += horizon_section("SHORT-TERM ZONES (daily chart, days to a few weeks)", "daily", win, pts, 5, 120,
+                               extra, 100, args, symbol)
+        out.append("")
+    if args.horizon in ("long", "both"):
+        try:
+            weekly, _ = fetch_bars(symbol, "5y", "1wk")
+        except SystemExit as e:
+            out.append("LONG-TERM ZONES: could not load weekly data (%s)" % e)
+            return out
+        wc = [b[3] for b in weekly]
+        w10, w40 = sma(wc, 10), sma(wc, 40)
+        wlast = wc[-1]
+        wpts = 2
+        if w10 and w40:
+            wpts = sum([wlast > w10, wlast > w40, w10 > w40, wc[-1] > wc[-13] if len(wc) > 13 else False])
+        extra = [(p, l) for p, l in ((w10, "10w avg"), (w40, "40w avg (~200d)")) if p]
+        extra += [(max(b[1] for b in weekly[-52:]), "52w high"), (min(b[2] for b in weekly[-52:]), "52w low")]
+        out += horizon_section("LONG-TERM ZONES (weekly chart, weeks to months)", "weekly", weekly, wpts, 4, 104,
+                               extra, 250, args, symbol)
+        out.append("")
+    return out
+
+
+def report(symbol, a, meta, args, extra=None):
     L = []
     add = L.append
     last = a["last"]
@@ -165,6 +375,9 @@ def report(symbol, a, meta, args):
         add("  Stop at           long: %s    short: %s" % (fmt(last - stop, pre="$"), fmt(last + stop, pre="$")))
         add("  Note              futures are leveraged; a gap past your stop can lose more than the amount above.")
     add("")
+    if extra:
+        L.extend(extra)
+    add("Zones are built from past swing highs/lows, moving averages, Fibonacci retracements and round numbers.")
     add("Statistics describe the past and do not predict price. This is not financial advice.")
     add("Delayed Yahoo data. Your broker's price is the one that fills.")
     return "\n".join(L)
@@ -177,6 +390,8 @@ def main(argv=None):
     ap.add_argument("--risk-pct", type=float, default=1.0, help="percent of account risked per trade")
     ap.add_argument("--stop", type=float, default=None, help="stop distance in dollars per ounce (default: ATR based)")
     ap.add_argument("--atr-mult", type=float, default=2.0)
+    ap.add_argument("--horizon", choices=["none", "short", "long", "both"], default="both",
+                    help="which trade-zone sections to add")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     if args.risk_pct <= 0 or args.risk_pct > 100:
@@ -188,7 +403,8 @@ def main(argv=None):
     if args.json:
         print(json.dumps(a, indent=2))
     else:
-        print(report(args.symbol, a, meta, args))
+        extra = zones_report(args.symbol, bars, a, args) if args.horizon != "none" else None
+        print(report(args.symbol, a, meta, args, extra))
     return 0
 
 
