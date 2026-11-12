@@ -38,6 +38,16 @@ def P(name, label, kind="text", default="", flag=None, choices=None,
 
 # id, group, title, what it does, script + fixed args, params
 COMMANDS = [
+    # ---- gold
+    dict(id="gold", group="Gold", title="Gold assessment",
+         help="Trend, volatility, levels and a risk-based position size from delayed Yahoo daily bars. "
+              "Read-only; statistics describe the past and do not predict price.",
+         script="webui/gold.py", fixed=[],
+         params=[P("symbol", "Contract", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
+                 P("account", "Account size ($)", "number", "10000", "--account"),
+                 P("risk", "Risk per trade (%)", "number", "1", "--risk-pct"),
+                 P("stop", "Stop distance ($/oz, blank = ATR based)", "number", "", "--stop"),
+                 P("atr", "ATR multiple for the stop", "number", "2", "--atr-mult")]),
     # ---- copycat
     dict(id="copycat-find", group="Copycat", title="Find an investor",
          help="Look up a filer's CIK by name (Buffett, Burry, Ackman...).",
