@@ -85,6 +85,19 @@ details.raw{margin-top:10px}details.raw summary{cursor:pointer;color:var(--mute)
 .sc .grid .v{font-size:13.5px}
 .r-good{color:var(--ok);font-weight:700}.r-ok{font-weight:600}.r-thin{color:var(--mute)}
 .sc.dim{opacity:.6}
+.sc.plan{padding:12px 14px}
+.sc .rk{font-weight:800;color:var(--mute)}
+.grade{font-size:11px;font-weight:800;padding:2px 8px;border-radius:5px;border:1px solid var(--line)}
+.grade.A{background:var(--ok);color:#fff;border-color:var(--ok)}.grade.B{border-color:var(--accent);color:var(--accent)}.grade.C{color:var(--mute)}
+.stt{font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--bg);border:1px solid var(--line);color:var(--mute)}
+.stt.hot{background:#b54708;border-color:#b54708;color:#fff}.stt.near{border-color:#b54708;color:#b54708}
+.ptrack{position:relative;height:34px;margin:8px 0 6px;border-radius:6px;background:var(--bg);border:1px solid var(--line)}
+.ptrack i{position:absolute;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--mute)}
+.ptrack i.e{background:var(--accent);width:4px}.ptrack i.s{background:#b42318}.ptrack i.t{background:#0b6b4f}.ptrack i.n{background:var(--ink);width:2px;top:0;bottom:0}
+.ptrack{margin-top:22px!important;margin-bottom:20px!important}.ptrack b.n{top:auto;bottom:-16px;color:var(--ink)}
+.ptrack b{position:absolute;top:-15px;font-size:9.5px;font-weight:700;transform:translateX(-50%);color:var(--mute);white-space:nowrap}
+.pnote{font-size:12.5px;margin-top:6px;color:var(--ink)}.pnote.sub{color:var(--mute)}
+details.more{margin:6px 0}details.more summary{cursor:pointer;color:var(--mute);font-size:13px;padding:4px 0}
 .tfs{display:flex;gap:3px;flex-wrap:wrap}
 .tfc{font-size:10.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--line);color:var(--mute)}
 .tfc.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
@@ -277,9 +290,10 @@ function renderGold(d){
     if (parts.length) bl.push('<b>Where price is:</b> ' + parts.join(', ') + '.');
   }
   const all = [];
-  TABS.forEach(t => secs[t[0]].setups.forEach(s => all.push({k: t[0], s})));
-  const good = all.filter(x => Math.max(0, ...x.s.targets.map(t => t.r)) >= 2);
-  bl.push('<b>Setups worth a look on paper (reward 2R or more):</b> ' + (good.length
+  TABS.forEach(t => secs[t[0]].plans.slice(0, 3).forEach(s => all.push({k: t[0], s})));
+  const good = all.filter(x => x.s.grade !== 'C' && Math.max(0, ...x.s.targets.map(t => t.r)) >= 2);
+  good.sort((p, q) => q.s.score - p.s.score);
+  bl.push('<b>Best trades on paper (grade A or B, reward 2R or more):</b> ' + (good.length
     ? good.slice(0, 4).map(x => esc(FRIENDLY[x.s.name] || x.s.name) + ' <span class="sub">(' + TFNAME[x.k] + ', ' + TREND_LABEL[x.s.trend] + ')</span>').join('; ') +
       (good.length > 4 ? '; +' + (good.length - 4) + ' more in the tabs below' : '') + '.'
     : 'none right now.'));
@@ -337,11 +351,43 @@ function renderGold(d){
         '<div><div class="k">Size for your risk</div><div class="v">' + size + '</div></div></div></div>';
     }).join('');
   }
+  function plan(x, s, k){
+    const buy = x.side === 'long';
+    const p0 = Math.min(x.stop, x.entry, x.targets[x.targets.length - 1].price, s.last) , p1 = Math.max(x.stop, x.entry, x.targets[x.targets.length - 1].price, s.last);
+    const span = (p1 - p0) || 1, pos = v => (4 + (v - p0) / span * 92).toFixed(1) + '%';
+    const mk = [['s', x.stop, 'STOP'], ['e', x.entry, 'ENTRY']].concat(x.targets.map((t, i) => ['t', t.price, 'T' + (i + 1)])).concat([['n', s.last, 'NOW']]);
+    const track = '<div class="ptrack">' + mk.map(m => '<i class="' + m[0] + '" style="left:' + pos(m[1]) + '"></i><b class="' + m[0] + '" style="left:' + pos(m[1]) + '">' + m[2] + '</b>').join('') + '</div>';
+    const tg = x.targets.map((t, i) => '<div class="' + (t.r >= 2 ? 'r-good' : t.r >= 1.5 ? 'r-ok' : 'r-thin') + '">T' + (i + 1) + ' ' + usd2(t.price) + ' · ' + t.r.toFixed(1) + 'R' +
+      '<span class="sub"> · ' + Math.round(x.split[i] * 100) + '% off' + (t.src === 'measured' ? ' · measured' : '') + '</span></div>').join('');
+    let size = '<span class="sub">enter an account size</span>';
+    if (x.size) {
+      const z = x.size;
+      size = (buy ? (z.etf_capped ? 'Whole account in gold ETF risks only ' + usd(z.etf_risk) + '<br>' : 'Risk ' + usd(z.risk_usd) + ' → about <b>' + usd(z.etf_usd) + '</b> of gold ETF (' + Math.round(z.etf_pct) + '%)<br>')
+                    : 'Short via spot/CFD only<br>') +
+        '<span class="sub">1 oz risks ' + usd(z.one_oz_risk) + ' (' + z.one_oz_pct.toFixed(1) + '%) · 1 micro ' + Math.round(z.micro_pct) + '%</span>';
+    }
+    const cls = x.status === 'WAIT' ? '' : x.status === 'NEAR' ? ' near' : ' hot';
+    const away = x.dist_pct;
+    return '<div class="sc plan"><div class="top"><span class="rk">#' + x.rank + '</span><span class="badge2 ' + (buy ? 'buy' : 'sell') + '">' + (buy ? 'BUY' : 'SELL') + '</span>' +
+      '<span class="name">' + esc(FRIENDLY[x.name] || x.name) + '</span><span class="grade ' + x.grade + '" title="score ' + x.score + ' of about 8.5">GRADE ' + x.grade + '</span>' +
+      '<span class="stt' + cls + '">' + esc(x.status) + (x.status === 'IN THE ZONE' ? '' : ' · ' + Math.abs(away).toFixed(2) + '% ' + (away > 0 ? 'above' : 'below') + ' price') + '</span>' +
+      '<span class="chip ' + (x.trend === 'with' ? 'on' : '') + '">' + TREND_LABEL[x.trend] + '</span>' +
+      (x.agree.length ? '<span class="chip tk" title="levels from these charts overlap this zone">' + x.agree.join('+') + ' agree</span>' : '') + '</div>' + track +
+      '<div class="grid"><div><div class="k">Entry</div><div class="v"><b>' + usd2(x.entry) + '</b> <span class="sub">zone ' + zr({lo: x.entry_zone[0], hi: x.entry_zone[1], mid: x.entry}) + '</span></div></div>' +
+      '<div><div class="k">Stop</div><div class="v">' + usd2(x.stop) + ' <span class="sub">risk ' + usd2(x.risk_per_oz) + '/oz</span></div></div>' +
+      '<div><div class="k">Targets · reward</div><div class="v">' + tg + '</div></div>' +
+      '<div><div class="k">Size for your risk</div><div class="v">' + size + '</div></div></div>' +
+      '<div class="pnote"><b>How:</b> ' + esc(x.entry_how) + '</div>' +
+      '<div class="pnote sub"><b>Cancel:</b> ' + esc(x.cancel) + ' <b>Manage:</b> after T1 move the stop to entry. All targets hit = ' + x.blend_r.toFixed(1) + 'R. Why here: ' + esc(x.why.join(', ')) + '.</div></div>';
+  }
   function sectionHtml(k){
     const s = secs[k];
     if (!s) return '<div class="note">' + esc(g.long_error || 'Not loaded.') + '</div>';
-    return '<div class="g-h">Price ladder · ' + TFNAME[k] + ' chart · more dots = more signals agree</div>' + ladder(s) +
-      '<div class="g-h">Scenarios · only if price actually gets there · greyed = reward under 1.5R</div>' + setups(s, k);
+    const top = s.plans.slice(0, 3), rest = s.plans.slice(3);
+    return '<div class="g-h">Top ' + top.length + ' trades · ' + TFNAME[k] + ' chart · ranked by zone strength, timeframe agreement, trend, reward and distance</div>' +
+      (top.length ? top.map(x => plan(x, s, k)).join('') : '<div class="note">No zone close enough to build a trade.</div>') +
+      (rest.length ? '<details class="more"><summary>' + rest.length + ' more trade idea' + (rest.length > 1 ? 's' : '') + ' on this chart</summary>' + rest.map(x => plan(x, s, k)).join('') + '</details>' : '') +
+      '<div class="g-h">Price ladder · more dots = more signals agree</div>' + ladder(s);
   }
 
   const tiles =

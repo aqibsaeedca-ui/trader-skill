@@ -265,6 +265,134 @@ def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step, min_risk_
     return dict(last=last, atr=atr_v, bias=bias, sup=sup, res=res, setups=setups, levels=levels)
 
 
+TICK = 0.5                      # prices are snapped to $0.50 so entries read as clean numbers
+SPLIT = (0.5, 0.3, 0.2)         # share of the position closed at target 1, 2, 3
+EXPIRES = {"15m": "16 bars (4 hours)", "1h": "12 bars (half a day)", "4h": "6 bars (one day)",
+           "daily": "5 sessions", "weekly": "3 weeks"}
+KINDS = {("long", "pullback"): "LONG on a pullback", ("long", "breakout"): "LONG on a breakout",
+         ("short", "pullback"): "SHORT on a rally into resistance", ("short", "breakout"): "SHORT on a breakdown"}
+
+
+def snap(x):
+    return round(x / TICK) * TICK
+
+
+def trade_plans(c, unit, key_levels=(), min_risk_atr=0.0):
+    """Every candidate trade on this chart, ranked best first. Each has one entry price, one stop and
+    three targets, so it can be placed as an order. Candidates: a pullback entry at each of the three
+    nearest zones on the entry side, and a breakout entry at the two nearest on the other side."""
+    last, atr_v, bias = c["last"], c["atr"], c["bias"]
+    sup, res = c["sup"], c["res"]
+    conf = [l for l in key_levels if l.get("kind") == "confluence"]
+
+    def trend_of(side):
+        if bias == "neutral":
+            return "range"
+        return "with" if (side == "long") == (bias == "bullish") else "counter"
+
+    def agree(lo, hi):
+        pad = 0.25 * atr_v
+        tfs = set()
+        for l in conf:
+            if l["lo"] <= hi + pad and l["hi"] >= lo - pad:
+                tfs.update(l["tfs"])
+        return sorted(tfs)
+
+    def targets(entry, risk, sgn, zones):
+        out = []
+        for z in zones:
+            p = snap(z["mid"])
+            if (p - entry) * sgn >= 0.75 * risk and (not out or (p - out[-1]["price"]) * sgn >= 0.5 * risk):
+                out.append(dict(price=p, src="level"))
+            if len(out) == 3:
+                break
+        for m in (1.5, 2.5, 4.0):               # no more real levels in range: measured targets
+            if len(out) >= 3:
+                break
+            p = snap(entry + sgn * m * risk)
+            if not out or (p - out[-1]["price"]) * sgn >= 0.5 * risk:
+                out.append(dict(price=p, src="measured"))
+        for t in out:
+            t["r"] = abs(t["price"] - entry) / risk
+        return out
+
+    cands = []
+
+    def add(kind, side, z, entry, stop, beyond):
+        sgn = 1 if side == "long" else -1
+        entry, stop = snap(entry), snap(stop)
+        if min_risk_atr and (entry - stop) * sgn < min_risk_atr * atr_v:
+            stop = snap(entry - sgn * min_risk_atr * atr_v)
+        risk = abs(entry - stop)
+        if risk <= 0:
+            return
+        tg = targets(entry, risk, sgn, beyond)
+        if not tg:
+            return
+        tfs = agree(z["lo"], z["hi"])
+        dist = abs(entry - last) / atr_v
+        tr = trend_of(side)
+        best = max(t["r"] for t in tg)
+        sc = (2 if z["n"] >= 3 else 1 if z["n"] >= 2 else 0)
+        sc += 2 if len(tfs) >= 3 else 1.5 if len(tfs) == 2 else 0
+        sc += {"with": 2, "range": 0.5, "counter": -1}[tr]
+        sc += 1 if best >= 2.5 else 0.5 if best >= 1.5 else -1
+        sc -= 0.5 if tg[0]["r"] < 1 else 0
+        sc += 1.5 if dist <= 0.5 else 1 if dist <= 1.5 else 0 if dist <= 3 else -1
+        inside = z["lo"] <= last <= z["hi"] and kind == "pullback"
+        status = "IN THE ZONE" if inside else "AT ENTRY" if dist <= 0.3 else "NEAR" if dist <= 1.0 else "WAIT"
+        buy = side == "long"
+        if kind == "pullback":
+            edge = z["hi"] if buy else z["lo"]
+            how = ("Limit %s at %.1f. Safer: wait for a %s candle to close back %s %.1f first (better proof, slightly worse fill)."
+                   % ("buy" if buy else "sell", entry, unit, "above" if buy else "below", snap(edge)))
+        else:
+            how = ("Enter only when a %s candle CLOSES %s %.1f. A wick through it does not count."
+                   % (unit, "above" if buy else "below", entry))
+        cancel = ("Cancel if a %s candle closes %s %.1f before you are filled, or if not filled within %s."
+                  % (unit, "below" if buy else "above", stop, EXPIRES.get(unit, "a few bars")))
+        cands.append(dict(
+            name=KINDS[(side, kind)], side=side, kind=kind, entry=entry, entry_zone=[z["lo"], z["hi"]], stop=stop,
+            risk_per_oz=risk, targets=tg, trend=tr, weak=z["n"] < 2, score=round(sc, 1),
+            grade="A" if sc >= 6.5 else "B" if sc >= 4.5 else "C", status=status, dist_atr=dist,
+            dist_pct=(entry / last - 1) * 100, agree=tfs, why=sorted(set(z["labels"]))[:4],
+            entry_how=how, cancel=cancel, expires=EXPIRES.get(unit, ""), split=list(SPLIT),
+            blend_r=sum(w * t["r"] for w, t in zip(SPLIT, tg))))
+
+    for z in sup[:3]:
+        add("pullback", "long", z, z["lo"] + 0.65 * (z["hi"] - z["lo"]), z["lo"] - 0.5 * atr_v,
+            [r for r in res])
+    for z in res[:3]:
+        add("pullback", "short", z, z["lo"] + 0.35 * (z["hi"] - z["lo"]), z["hi"] + 0.5 * atr_v,
+            [s for s in sup])
+    for z in res[:2]:
+        add("breakout", "long", z, z["hi"] + 0.25 * atr_v, z["lo"] - 0.25 * atr_v,
+            [r for r in res if r["mid"] > z["mid"]])
+    for z in sup[:2]:
+        add("breakout", "short", z, z["lo"] - 0.25 * atr_v, z["hi"] + 0.25 * atr_v,
+            [s for s in sup if s["mid"] < z["mid"]])
+    cands.sort(key=lambda p: (-p["score"], p["dist_atr"]))
+    top = []
+    for side in ("long", "short"):               # always show the best trade in each direction
+        top += [p for p in cands if p["side"] == side][:1]
+    top += [p for p in cands if p not in top][:max(0, 3 - len(top))]
+    top.sort(key=lambda p: (-p["score"], p["dist_atr"]))
+    cands = top + [p for p in cands if p not in top]
+    for i, p in enumerate(cands, 1):
+        p["rank"] = i
+    return cands
+
+
+def key_for(symbol):
+    return _INTRA.get(symbol, {}).get("levels", [])
+
+
+def attach_plans(c, unit, key_levels=(), min_risk_atr=0.0):
+    if "plans" not in c:
+        c["plans"] = trade_plans(c, unit, key_levels, min_risk_atr)
+    return c["plans"]
+
+
 def wants(args, part):
     """part is 'intraday', 'short' (daily) or 'long' (weekly)."""
     return args.horizon in ("all", "both", part) and not (args.horizon == "both" and part == "intraday")
@@ -301,6 +429,13 @@ def intraday_report(symbol, args):
     return L
 
 
+def note_for_plan(p):
+    bits = [{"with": "with the trend", "counter": "counter-trend", "range": "no clear trend"}[p["trend"]]]
+    if p["agree"]:
+        bits.append("timeframes agree: " + "+".join(p["agree"]))
+    return ", ".join(bits)
+
+
 def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, step, args, symbol, c=None):
     if c is None:
         c = compute_setups(bars, trend_pts, k, fib_window, extra_levels, step)
@@ -320,7 +455,18 @@ def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, s
     if not sup:
         add("    none found within 15%")
     add("")
-    add("  Scenarios (conditions, not predictions; act only if price actually gets there and you agree):")
+    plans = attach_plans(c, unit, key_for(symbol))
+    add("  TOP TRADES (ranked; one entry, one stop, three targets; exit %s)" % " / ".join("%d%%" % (w * 100) for w in SPLIT))
+    for p in plans[:3]:
+        add("   #%d %s  grade %s  [%s, %s]" % (p["rank"], p["name"], p["grade"], p["status"], note_for_plan(p)))
+        add("       Entry %s   Stop %s (risk %s/oz)" % (fmt(p["entry"], 1, "$"), fmt(p["stop"], 1, "$"), fmt(p["risk_per_oz"], 1, "$")))
+        add("       Targets  " + "   ".join("T%d %s (%.1fR)" % (i, fmt(t["price"], 1, "$"), t["r"]) for i, t in enumerate(p["targets"], 1)))
+        add("       %s" % p["entry_how"])
+        add("       %s" % p["cancel"])
+    if not plans:
+        add("   none: no zones close enough to build a trade")
+    add("")
+    add("  Other scenarios (conditions, not predictions; act only if price actually gets there and you agree):")
     note_for = {"with": "with the trend", "counter": "counter-trend, higher risk", "range": "range / no clear trend"}
     for s in c["setups"]:
         z = s["zone"]
@@ -387,18 +533,31 @@ def setup_dict(s, args, symbol):
              zone=[s["zone"]["lo"], s["zone"]["hi"]],
              targets=[dict(price=t, r=abs(t - s["level"]) / risk if risk else 0) for t in s["targets"]])
     if args.account and risk:
-        risk_usd = args.account * args.risk_pct / 100
-        stop_pct = risk / s["level"]
-        etf = min(risk_usd / stop_pct, args.account)
-        d["size"] = dict(risk_usd=risk_usd, etf_usd=etf, etf_pct=etf / args.account * 100,
-                         etf_capped=risk_usd / stop_pct > args.account, etf_risk=etf * stop_pct,
-                         one_oz_risk=risk, one_oz_pct=risk / args.account * 100,
-                         micro_risk=10 * risk, micro_pct=10 * risk / args.account * 100)
+        d["size"] = size_dict(s["level"], risk, args)
     return d
 
 
-def section_dict(c, args, symbol):
+def size_dict(level, risk, args):
+    risk_usd = args.account * args.risk_pct / 100
+    stop_pct = risk / level
+    etf = min(risk_usd / stop_pct, args.account)
+    return dict(risk_usd=risk_usd, etf_usd=etf, etf_pct=etf / args.account * 100,
+                etf_capped=risk_usd / stop_pct > args.account, etf_risk=etf * stop_pct,
+                one_oz_risk=risk, one_oz_pct=risk / args.account * 100,
+                micro_risk=10 * risk, micro_pct=10 * risk / args.account * 100)
+
+
+def plan_dict(p, args):
+    d = dict(p)
+    if args.account and p["risk_per_oz"]:
+        d["size"] = size_dict(p["entry"], p["risk_per_oz"], args)
+    return d
+
+
+def section_dict(c, args, symbol, unit="daily"):
+    attach_plans(c, unit, key_for(symbol))
     return dict(bias=c["bias"], atr=c["atr"], last=c["last"],
+                plans=[plan_dict(p, args) for p in c["plans"]],
                 sup=[zone_dict(z, c["last"], c["atr"]) for z in c["sup"]],
                 res=[zone_dict(z, c["last"], c["atr"]) for z in c["res"]],
                 setups=[setup_dict(s, args, symbol) for s in c["setups"]])
@@ -413,18 +572,18 @@ def build_json(symbol, bars, a, meta, args):
             import gold_intraday as gi
             res = intraday_result(symbol)
             sup, rs = gi.split_levels(res, only_key=True)
-            out["intraday"] = {tf: section_dict(res["setup"][tf], args, symbol) for tf in gi.INTRADAY}
+            out["intraday"] = {tf: section_dict(res["setup"][tf], args, symbol, tf) for tf in gi.INTRADAY}
             out["confluence"] = {"price": res["price"], "support": sup, "resistance": rs}
         except SystemExit as e:
             out["intraday_error"] = str(e)
     if wants(args, "short"):
         win, spts, extra = short_term_inputs(bars)
-        out["short"] = section_dict(compute_setups(win, spts, 5, 120, extra, 100), args, symbol)
+        out["short"] = section_dict(compute_setups(win, spts, 5, 120, extra, 100), args, symbol, "daily")
     if wants(args, "long"):
         try:
             weekly = weekly_bars(symbol)
             wpts, extra = long_term_inputs(weekly)
-            out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, 250), args, symbol)
+            out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, 250), args, symbol, "weekly")
         except SystemExit as e:
             out["long_error"] = str(e)
     extra_txt = zones_report(symbol, bars, a, args) if args.horizon != "none" else None

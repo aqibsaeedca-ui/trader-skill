@@ -127,6 +127,8 @@ def analyse(symbol, ttl15=60):
 
     price = m15[-1][3]
     levels = confluence(own, price, setup["1h"]["atr"])
+    for tf, unit in (("15m", "15m"), ("1h", "1h"), ("4h", "4h"), ("1d", "daily"), ("1w", "weekly")):
+        gold.attach_plans(setup[tf], unit, levels, 1.0 if tf in INTRADAY else 0.0)
     return dict(symbol=symbol, price=price, bars=bars, own=own, setup=setup, levels=levels,
                 asof=m15[-1][0])
 
