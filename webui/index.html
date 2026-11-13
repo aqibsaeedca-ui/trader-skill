@@ -97,6 +97,40 @@ details.raw{margin-top:10px}details.raw summary{cursor:pointer;color:var(--mute)
 .ptrack{margin-top:22px!important;margin-bottom:20px!important}.ptrack b.n{top:auto;bottom:-16px;color:var(--ink)}
 .ptrack b{position:absolute;top:-15px;font-size:9.5px;font-weight:700;transform:translateX(-50%);color:var(--mute);white-space:nowrap}
 .pnote{font-size:12.5px;margin-top:6px;color:var(--ink)}.pnote.sub{color:var(--mute)}
+.gn-top{display:grid;grid-template-columns:minmax(260px,1.2fr) 2fr;gap:12px;margin-bottom:12px}
+@media (max-width:760px){.gn-top{grid-template-columns:1fr}}
+.gn-gauge{border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--bg)}
+.gn-gauge .k{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+.gn-gauge .big{font-size:34px;font-weight:800;line-height:1.1}.gn-gauge .lbl{font-weight:700;margin-bottom:8px}
+.gn-bar{position:relative;height:12px;border-radius:99px;background:linear-gradient(90deg,#b42318,#d0d5dd 50%,#0b6b4f);margin:10px 0 4px}
+.gn-bar i{position:absolute;top:-4px;width:4px;height:20px;border-radius:3px;background:var(--ink);box-shadow:0 0 0 2px var(--bg)}
+.gn-scale{display:flex;justify-content:space-between;font-size:10.5px;color:var(--mute)}
+.gn-up{color:#0b6b4f}.gn-dn{color:#b42318}.gn-fl{color:var(--mute)}
+@media (prefers-color-scheme:dark){.gn-up{color:#32d583}.gn-dn{color:#f97066}}
+.gn-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.gn-tile{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
+.gn-tile .k{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}.gn-tile .v{font-size:20px;font-weight:700}.gn-tile .s{font-size:12px;color:var(--mute)}
+.gn-confirm{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:6px}
+.gn-confirm li{border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:8px 12px;background:var(--bg);font-size:13.5px}
+.gn-confirm li.good{border-left-color:#0b6b4f}.gn-confirm li.warn{border-left-color:#b54708}.gn-confirm li.flat{border-left-color:var(--line)}
+.gn-drivers{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-bottom:12px}
+.gn-drv{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg)}
+.gn-drv.off{opacity:.5}.gn-drv .nm{font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;gap:6px}
+.gn-split{display:flex;height:8px;border-radius:99px;overflow:hidden;background:var(--line);margin-bottom:6px}
+.gn-split b{display:block;height:100%}.gn-split .u{background:#0b6b4f}.gn-split .d{background:#b42318}.gn-split .m{background:#98a2b3}
+.gn-drv .why{font-size:12px;color:var(--mute)}
+.gn-link{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}
+.gn-link th{font-size:11px;color:var(--mute);text-transform:uppercase;text-align:left;padding:4px 8px;letter-spacing:.04em}
+.gn-link td{padding:8px;border-top:1px solid var(--line);vertical-align:middle}
+.gn-corr{position:relative;width:120px;height:10px;border-radius:99px;background:var(--line);display:inline-block;vertical-align:middle}
+.gn-corr i{position:absolute;top:0;height:10px;border-radius:99px}.gn-corr u{position:absolute;left:50%;top:-2px;width:1px;height:14px;background:var(--mute)}
+.gn-hl{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.gn-hl li{border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:9px 12px;background:var(--bg)}
+.gn-hl li.bullish{border-left-color:#0b6b4f}.gn-hl li.bearish{border-left-color:#b42318}.gn-hl li.neutral{border-left-color:var(--line)}
+.gn-hl .meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mute);margin-bottom:4px}
+.gn-hl a.t,.gn-hl .t{color:var(--ink);font-weight:600;text-decoration:none}.gn-hl a.t:hover{text-decoration:underline}
+.gn-dir{font-size:11px;font-weight:800;padding:2px 8px;border-radius:5px;color:#fff}.gn-dir.bullish{background:#0b6b4f}.gn-dir.bearish{background:#b42318}.gn-dir.neutral{background:#667085}
+.gn-use{border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin:12px 0;background:var(--bg)}
 details.more{margin:6px 0}details.more summary{cursor:pointer;color:var(--mute);font-size:13px;padding:4px 0}
 .tfs{display:flex;gap:3px;flex-wrap:wrap}
 .tfc{font-size:10.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--line);color:var(--mute)}
@@ -226,6 +260,7 @@ async function run(c){
     $('#cmdline').textContent = '$ ' + d.command;
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
+    if (d.view === 'goldnews' && d.code === 0) { try { return renderGoldNews(d); } catch (e) { console.error(e); } }
     if (d.view === 'backtest' && d.code === 0) { try { return renderBacktest(d); } catch (e) { console.error(e); } }
     $('#result').innerHTML =
       '<span class="badge ' + (d.code === 0 ? 'ok' : d.code === 1 ? 'warn' : 'bad') + '">exit ' + d.code + '</span> ' +
@@ -586,6 +621,95 @@ function renderNews(d){
     const m = e.target.closest('.more');
     if (m) { const s = document.getElementById(m.dataset.s); const open = s.classList.toggle('open'); m.textContent = open ? 'less' : 'more'; }
   });
+  draw();
+}
+
+function renderGoldNews(d){
+  const g = JSON.parse(d.stdout), p = g.pressure, mk = g.market;
+  const sg = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+  const cls = v => v > 0.05 ? 'gn-up' : v < -0.05 ? 'gn-dn' : 'gn-fl';
+  const pcls = p.score >= 10 ? 'gn-up' : p.score <= -10 ? 'gn-dn' : 'gn-fl';
+  const pos = Math.max(2, Math.min(98, 50 + p.score / 2));
+  const tile = (k, v, s, c) => '<div class="gn-tile"><div class="k">' + esc(k) + '</div><div class="v ' + c + '">' + v + '</div><div class="s">' + s + '</div></div>';
+  let tiles = '';
+  if (mk) {
+    tiles += tile('Gold (GC=F)', usd2(mk.gold.last), '<span class="' + cls(mk.gold.day) + '">' + sg(mk.gold.day) + '% today</span> · ' + sg(mk.gold.five) + '% 5d', '');
+    mk.links.forEach(l => {
+      const day = l.unit === '%' ? sg(l.day) + '%' : (l.day >= 0 ? '+' : '−') + Math.abs(l.day * 100).toFixed(0) + ' bp';
+      const five = l.unit === '%' ? sg(l.five) + '%' : (l.five >= 0 ? '+' : '−') + Math.abs(l.five * 100).toFixed(0) + ' bp';
+      const val = l.symbol === '^TNX' ? l.last.toFixed(2) + '%' : Math.round(l.last).toLocaleString('en-US');
+      // colour by what the move usually means for gold, not by up/down
+      const good = l.corr60 == null ? 0 : (l.day * l.corr60);
+      tiles += tile(l.name, val, '<span class="' + cls(good) + '">' + day + ' today</span> · ' + five + ' 5d', '');
+    });
+  }
+  const gauge = '<div class="gn-gauge"><div class="k">News pressure on gold · last ' + g.hours + 'h</div>' +
+    '<div class="big ' + pcls + '">' + (p.score >= 0 ? '+' : '−') + Math.abs(p.score).toFixed(0) + '</div><div class="lbl ' + pcls + '">' + esc(p.label) + '</div>' +
+    '<div class="gn-bar"><i style="left:calc(' + pos.toFixed(1) + '% - 2px)"></i></div><div class="gn-scale"><span>bearish −100</span><span>0</span><span>+100 bullish</span></div>' +
+    '<div class="sub" style="margin-top:8px">' + p.n + ' relevant of ' + g.scanned + ' headlines · <span class="gn-up">' + p.bull + ' bullish</span> · <span class="gn-dn">' + p.bear + ' bearish</span> · ' + p.neutral + ' neutral</div></div>';
+
+  const confirm = g.confirm.length ? '<div class="g-h">Does the market agree with the news?</div><ul class="gn-confirm">' +
+    g.confirm.map(c => '<li class="' + c[0] + '">' + (c[0] === 'good' ? '✓ ' : c[0] === 'warn' ? '⚠ ' : '· ') + esc(c[1]) + '</li>').join('') + '</ul>' : '';
+
+  const drivers = '<div class="g-h">What is driving it · bars show headline counts: green pushes gold up, red pushes it down</div><div class="gn-drivers">' +
+    g.drivers.map(x => {
+      const t = x.bull + x.bear + x.mixed;
+      const w = n => t ? (n / t * 100).toFixed(1) + '%' : '0';
+      return '<div class="gn-drv' + (t ? '' : ' off') + '"><div class="nm"><span>' + esc(x.name) + '</span><span class="sub">' + (t ? x.bull + '▲ ' + x.bear + '▼' + (x.mixed ? ' ' + x.mixed + '◆' : '') : 'quiet') + '</span></div>' +
+        '<div class="gn-split"><b class="u" style="width:' + w(x.bull) + '"></b><b class="m" style="width:' + w(x.mixed) + '"></b><b class="d" style="width:' + w(x.bear) + '"></b></div>' +
+        '<div class="why">' + esc(x.why) + '</div></div>';
+    }).join('') + '</div>';
+
+  let links = '';
+  if (mk && mk.links.length) {
+    const cell = c => c.mean == null ? '<span class="sub">too few days</span>' : '<b class="' + cls(c.mean) + '">' + sg(c.mean) + '%</b> <span class="sub">(' + c.n + ' days)</span>';
+    const meaning = l => {
+      const c = l.corr60;
+      if (c == null) return '';
+      const s = Math.abs(c) < 0.2 ? 'Weak link lately' : (c < 0 ? 'Moves opposite gold' : 'Moves with gold');
+      return s + (Math.abs(c) >= 0.2 ? (Math.abs(c) >= 0.5 ? ' (strong)' : ' (moderate)') : '');
+    };
+    links = '<div class="g-h">How gold has reacted to other markets · measured on 2 years of daily moves</div><table class="gn-link"><thead><tr><th>Market</th><th>60-day link</th><th>Gold when it jumps</th><th>Gold when it drops</th><th>Read</th></tr></thead><tbody>' +
+      mk.links.map(l => {
+        const c = l.corr60 == null ? 0 : l.corr60, w = Math.abs(c) * 50;
+        const bar = '<span class="gn-corr"><u></u><i style="' + (c >= 0 ? 'left:50%' : 'left:' + (50 - w) + '%') + ';width:' + w + '%;background:' + (c >= 0 ? '#0b6b4f' : '#b42318') + '"></i></span> <span class="sub">' + (l.corr60 == null ? 'n/a' : (c >= 0 ? '+' : '−') + Math.abs(c).toFixed(2)) + '</span>';
+        return '<tr><td><b>' + esc(l.name) + '</b></td><td>' + bar + '</td><td>' + cell(l.up) + '</td><td>' + cell(l.down) + '</td><td class="sub">' + meaning(l) + '</td></tr>';
+      }).join('') + '</tbody></table><div class="note">"Jumps" and "drops" mean a daily move of more than half its usual size. Correlation runs from −1 (opposite) to +1 (together); it changes over time.</div>';
+  }
+
+  const lean = p.score >= 10 ? 1 : p.score <= -10 ? -1 : 0;
+  const use = '<div class="gn-use"><b>How to use this with your trade plans.</b> ' +
+    (lean > 0 ? 'News leans bullish: it adds weight to BUY plans graded A or B on the Gold assessment and argues against fading rallies. ' :
+     lean < 0 ? 'News leans bearish: it adds weight to SELL plans graded A or B and argues for caution on BUY dips. ' :
+     'News is balanced: let the price levels and trade grades lead, and do not size up on news alone. ') +
+    'News never moves your stop. Headlines that hit price already show up in the move, so avoid chasing a spike; wait for the plan\'s entry. <a href="#gold">Open Gold assessment</a></div>';
+
+  const heads = g.headlines;
+  const state = {f: 'all'};
+  const draw = () => {
+    const rows = heads.filter(h => state.f === 'all' || (state.f === 'high' ? h.impact === 'high' : h.direction === state.f));
+    $('#gnl').innerHTML = rows.length ? rows.map(h => {
+      const url = safeUrl(h.link);
+      return '<li class="' + h.direction + '"><div class="meta"><span class="gn-dir ' + h.direction + '">' + h.direction.toUpperCase() + ' ' + (h.score >= 0 ? '+' : '−') + Math.abs(h.score).toFixed(1) + '</span>' +
+        '<span class="chip tk">' + h.impact + ' impact</span>' +
+        h.drivers.map(x => '<span class="chip">' + esc(x.name) + (x.dir === 'mixed' ? ' ◆' : x.dir === 'bull' ? ' ▲' : ' ▼') + '</span>').join('') +
+        '<span>' + esc(h.source || '') + ' · ' + esc(timeAgo(h.time)) + '</span></div>' +
+        (url ? '<a class="t" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(h.title) + '</a>' : '<span class="t">' + esc(h.title) + '</span>') + '</li>';
+    }).join('') : '<li class="note">Nothing matches.</li>';
+  };
+  $('#result').innerHTML =
+    '<div class="sub">checked ' + esc(new Date(g.checked * 1000).toLocaleString()) + ' · delayed prices · headlines from Yahoo Finance and Google News</div>' +
+    '<div class="gn-top">' + gauge + '<div class="gn-tiles">' + tiles + '</div></div>' + confirm + use + drivers + links +
+    '<div class="g-h">Headlines ranked by likely impact on gold</div><div class="bar">' +
+    [['all', 'All'], ['high', 'High impact'], ['bullish', 'Bullish'], ['bearish', 'Bearish'], ['neutral', 'Neutral']].map(f => '<button type="button" class="chip' + (f[0] === 'all' ? ' on' : '') + '" data-gf="' + f[0] + '">' + f[1] + '</button>').join('') +
+    '</div><ul class="gn-hl" id="gnl"></ul>' +
+    g.errors.map(e => '<div class="note">' + esc(e) + '</div>').join('') +
+    '<div class="note">Scores come from keyword rules that read wording, not meaning (they can miss sarcasm, negation and context). Headlines are leads, not facts. Correlations describe the past. Not financial advice.</div>';
+  $('#result').onclick = e => {                       // onclick, so a re-run replaces the old handler
+    const b = e.target.closest('button[data-gf]'); if (!b) return;
+    state.f = b.dataset.gf;
+    document.querySelectorAll('button[data-gf]').forEach(x => x.classList.toggle('on', x === b)); draw();
+  };
   draw();
 }
 

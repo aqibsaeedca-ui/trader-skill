@@ -101,6 +101,11 @@ COMMANDS = [
                  P("nosec", "Headlines only (skip SEC)", "check", flag="--no-sec"),
                  P("all", "Show seen items too", "check", flag="--all"),
                  P("dry", "Dry run (do not update state)", "check", "1", "--dry-run")]),
+    dict(id="gold-news", group="Watch", title="Gold news impact",
+         help="Scans gold, Fed, dollar, yield and geopolitics headlines, scores which way each pushes gold and "
+              "why, and checks the dollar, 10-year yield and stocks to see if markets agree. Keyword rules, not a forecast.",
+         script="webui/gold_news.py", fixed=["--json"], view="goldnews",
+         params=[P("hours", "Hours back", "number", "36", "--hours")]),
     dict(id="pelosi-index", group="Watch", title="Congress trades: index",
          help="Periodic Transaction Reports filed this year.",
          script="trader-pelosi/ptr.py", fixed=["index"],
