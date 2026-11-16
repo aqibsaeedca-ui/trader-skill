@@ -18,10 +18,12 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import assets  # noqa: E402
 import gold_watch  # noqa: E402  (same folder; the watcher never places orders)
 
 ROOT = Path(__file__).resolve().parent.parent
-WATCHER = gold_watch.Watcher()
+WATCHERS = {"gold": gold_watch.Watcher(), "btc": gold_watch.Watcher(assets.BTC)}   # one per asset, never place orders
+WATCH_PATH = re.compile(r"^/api/(gold|btc)/watch$")
 WEB = Path(__file__).resolve().parent
 TRADER_DIR = ROOT / "trader"
 HOST, PORT = "127.0.0.1", int(os.environ.get("TRADER_WEB_PORT", "8765"))
@@ -62,6 +64,30 @@ COMMANDS = [
                  P("window", "Order stays working (bars)", "number", "10", "--window"),
                  P("hold", "Max bars held", "number", "20", "--hold"),
                  P("cost", "Cost ($/oz round trip)", "number", "0.5", "--cost")]),
+    # ---- bitcoin: the same analysis as gold, on BTC-USD (24/7, so no market-hours gaps)
+    dict(id="btc", group="Bitcoin", title="Bitcoin assessment",
+         help="The same trend, volatility, levels, multi-timeframe confluence and ranked trade plans as the gold page, "
+              "on BTC-USD (delayed Yahoo bars). Read-only; statistics describe the past and do not predict price.",
+         script="webui/gold.py", fixed=["--json", "--symbol", "BTC-USD"], view="gold",
+         params=[P("horizon", "Timeframes", "select", "all", "--horizon",
+                   choices=["all", "intraday", "short", "long", "none"]),
+                 P("account", "Account size ($)", "number", "2700", "--account"),
+                 P("risk", "Risk per trade (%)", "number", "1", "--risk-pct"),
+                 P("stop", "Stop distance ($/BTC, blank = ATR based)", "number", "", "--stop"),
+                 P("atr", "ATR multiple for the stop", "number", "2", "--atr-mult")]),
+    dict(id="btc-backtest", group="Bitcoin", title="Bitcoin backtest",
+         help="Replays the daily setups on past BTC-USD prices (no look-ahead) and shows win rate, average R, "
+              "stability and a no-zone baseline. Takes a few seconds.",
+         script="webui/gold_backtest.py", fixed=["--json", "--symbol", "BTC-USD"], view="backtest",
+         params=[P("years", "History", "select", "10y", "--years", choices=["10y", "5y", "2y"]),
+                 P("window", "Order stays working (bars)", "number", "10", "--window"),
+                 P("hold", "Max bars held", "number", "20", "--hold"),
+                 P("cost", "Cost ($/BTC round trip)", "number", "25", "--cost")]),
+    dict(id="btc-news", group="Bitcoin", title="Bitcoin news impact",
+         help="Scans bitcoin, ETF-flow, regulation, Fed, dollar and stock headlines, scores which way each pushes BTC and "
+              "why, and checks the dollar, 10-year yield, Nasdaq and gold to see if markets agree. Keyword rules, not a forecast.",
+         script="webui/gold_news.py", fixed=["--json", "--asset", "btc"], view="goldnews",
+         params=[P("hours", "Hours back", "number", "36", "--hours")]),
     # ---- copycat
     dict(id="copycat-find", group="Copycat", title="Find an investor",
          help="Look up a filer's CIK by name (Buffett, Burry, Ackman...).",
@@ -247,26 +273,27 @@ def run_command(cmd_id, values):
                 seconds=round(time.time() - start, 2))
 
 
-def watch_action(body):
-    """Control the gold alert watcher. Settings are validated; nothing here places orders."""
+def watch_action(body, asset="gold"):
+    """Control one asset's alert watcher. Settings are validated; nothing here places orders."""
+    w = WATCHERS[asset]
     action = str(body.get("action", ""))
     if action == "settings":
-        WATCHER.configure(body.get("settings"))
+        w.configure(body.get("settings"))
     elif action == "start":
         if "settings" in body:
-            WATCHER.configure(body.get("settings"))
-        WATCHER.start()
+            w.configure(body.get("settings"))
+        w.start()
     elif action == "stop":
-        WATCHER.stop()
+        w.stop()
     elif action == "check":
-        WATCHER.check_once()
+        w.check_once()
     elif action == "test":
-        WATCHER.test()
+        w.test()
     elif action == "clear":
-        WATCHER.clear()
+        w.clear()
     else:
         raise BadInput("unknown action")
-    return WATCHER.status()
+    return w.status()
 
 
 def list_files():
@@ -318,8 +345,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/commands":
             return self._json(200, {"commands": COMMANDS, "root": str(ROOT),
                                     "python": sys.version.split()[0]})
-        if path == "/api/gold/watch":
-            return self._json(200, WATCHER.status())
+        m = WATCH_PATH.match(path)
+        if m:
+            return self._json(200, WATCHERS[m.group(1)].status())
         if path == "/api/files":
             return self._json(200, {"files": list_files()})
         if path == "/api/file":
@@ -333,7 +361,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self._json(403, {"error": "bad host"})
-        if self.path not in ("/api/run", "/api/gold/watch"):
+        wm = WATCH_PATH.match(self.path)
+        if self.path != "/api/run" and not wm:
             return self._json(404, {"error": "not found"})
         # JSON content type forces a CORS preflight, which we never grant,
         # so other websites cannot trigger runs from the user's browser.
@@ -347,8 +376,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(min(length, 20_000)) or b"{}")
             if not isinstance(body, dict):
                 raise ValueError("body must be an object")
-            if self.path == "/api/gold/watch":
-                return self._json(200, watch_action(body))
+            if wm:
+                return self._json(200, watch_action(body, wm.group(1)))
             result = run_command(str(body.get("id", "")), body.get("values") or {})
         except BadInput as e:
             return self._json(400, {"error": str(e)})

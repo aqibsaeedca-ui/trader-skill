@@ -99,6 +99,65 @@ LINKS = [  # (symbol, name, kind, how it usually relates, meaning)
 ]
 
 
+# ---- Bitcoin rulebook. Same mechanics, different drivers: crypto trades as a risk asset, so stocks
+# and growth data point the other way from gold, and crypto-only news (ETF flows, rules, hacks) matters.
+_G = {d["id"]: d for d in DRIVERS}
+BTC_WORDS = re.compile(r"\b(bitcoin|btc|btc-usd|crypto(currenc(y|ies))?|spot bitcoin|digital assets?)\b", re.I)
+BTC_DRIVERS = [
+    dict(_G["fed"], why="Rate cuts and easy money lift risk assets, crypto included (bullish); hikes and 'higher for longer' drain liquidity (bearish).",
+         bear=[p for p in _G["fed"]["bear"] if "gold" not in p.pattern] +
+         R(r"(pressure|weigh\w*|hit\w*|hurt\w*|dent\w*) (on )?(bitcoin|btc|crypto)", r"(bitcoin|btc|crypto) (under pressure|pressured)")),
+    dict(_G["usd"], weight=0.8, why="A weaker dollar usually helps bitcoin and a strong one weighs on it, though the link is looser than for gold."),
+    dict(_G["yields"], weight=0.8, why="Higher yields make safe interest more attractive than a volatile asset (bearish); falling yields help."),
+    dict(id="flows", name="ETF flows & institutions", weight=1.0,
+         why="Spot ETF and corporate buying is real demand (bullish); outflows and large holders selling remove it (bearish).",
+         bull=R(r"etfs? inflows?", r"record inflows?", r"institutional (buy\w*|adoption|demand|investors? (buy|add))", r"(strategy|microstrategy|saylor).*(buy|bought|purchas\w+|acquir\w+|adds?)",
+                r"(strategic )?bitcoin reserve", r"treasur(y|ies) (buy\w*|adds?).*bitcoin", r"whales? (buy\w*|accumulat\w+)"),
+         bear=R(r"etfs? outflows?", r"record outflows?", r"institutional (selling|outflows?)", r"whales? (sell\w*|dump\w*)",
+                r"(sells?|sold|selling|dump\w*) (\d[\d,.]* )?(bitcoin|btc)", r"miners? (sell\w*|dump\w*|capitulat\w+)")),
+    dict(id="rules", name="Regulation & policy", weight=0.9,
+         why="Clear, friendly rules and approvals widen who can buy (bullish); bans, lawsuits and crackdowns narrow it (bearish).",
+         bull=R(r"(sec|regulators?|congress|senate).*(approv\w+|clarity|friendly|framework|passes|advances)", r"pro-crypto", r"legal tender",
+                r"crypto bill (passes|advances)", r"etf approv\w+", r"approv\w+ (spot )?(bitcoin|crypto) etf"),
+         bear=R(r"\bban(s|ned|ning)?\b", r"crackdown", r"\blawsuit\b", r"\bsues?\b", r"investigat\w+", r"enforcement", r"restrict\w+",
+                r"reject\w*", r"\bfines?\b.*(crypto|exchange)")),
+    dict(id="security", name="Hacks & exchange trouble", weight=0.8,
+         why="Hacks, thefts and exchange failures damage trust and force selling (bearish).",
+         bull=[],
+         bear=R(r"\bhack(ed|s|ers?)?\b", r"\bexploit(ed|s)?\b", r"\bstolen\b", r"\bbreach\w*", r"exchange (collapse\w*|halts?|insolven\w+|bankrupt\w*)", r"rug pull")),
+    dict(id="risk", name="Stocks & risk appetite", weight=0.8,
+         why="Bitcoin trades like a risk asset: stock rallies and risk-on moods help it (bullish); sell-offs and recession fear hurt it (bearish).",
+         bull=R(r"stocks? (rally|surge|soar|jump)", r"(nasdaq|s&p).*(record|rally|surge)", r"risk[- ]on", r"record high.*(s&p|dow|nasdaq|stocks)"),
+         bear=R(r"stocks? (tumble|plunge|sell-?off|slump|sink|crash)", r"market (rout|turmoil|panic|sell-?off)", r"risk[- ]off", r"\brecession\b",
+                r"wall street (falls?|tumbles?|slumps?)")),
+    dict(id="inflation", name="Inflation", weight=0.6,
+         why="Hot inflation tends to make the Fed more hawkish (bearish for risk assets); cooler inflation raises cut hopes (bullish).",
+         bull=_G["inflation"]["bear"], bear=_G["inflation"]["bull"]),
+    dict(_G["jobs"], weight=0.5, why="Strong jobs data keeps the Fed from cutting (bearish); weak data raises cut bets (bullish)."),
+    dict(id="geo", name="Geopolitics", weight=0.5,
+         why="Crises usually hit crypto first as money runs to cash (bearish); de-escalation lets risk appetite return. Not a reliable safe haven short-term.",
+         bull=R(r"cease[- ]?fire", r"peace (deal|talks)", r"de-?escalat\w+", r"\btruce\b"),
+         bear=R(r"\bwar\b", r"missile", r"invasion", r"\bescalat\w+", r"geopolitic\w*", r"\bsanctions?\b", r"\btensions?\b", r"trade war", r"\btariffs?\b")),
+    dict(id="move", name="Bitcoin price action", weight=0.4, needs_gold=True,
+         why="These headlines report a move that already happened, not its cause. They show direction, so they count the least.",
+         bull=_G["move"]["bull"], bear=_G["move"]["bear"]),
+]
+BTC_JUNK = re.compile(r"\b(price prediction|forecast|could (hit|reach|soar)|meme ?coins?|airdrop|giveaway|presale|casino|sponsored|"
+                      r"how to buy|dogecoin|shiba|xrp|solana|cardano|pepe|ripple|ethereum|ether)\b", re.I)
+BTC_LINKS = [("DX-Y.NYB", "US dollar index", "pct"), ("^TNX", "10-year Treasury yield", "diff"),
+             ("^IXIC", "Nasdaq", "pct"), ("GC=F", "Gold", "pct")]
+
+
+def asset_cfg(asset_id):
+    if asset_id == "btc":
+        return dict(id="btc", name="Bitcoin", short="bitcoin", symbol="BTC-USD", words=BTC_WORDS, feeds=["BTC-USD", "IBIT"],
+                    queries=["bitcoin price", "bitcoin ETF flows", "crypto regulation SEC", "bitcoin Fed rate",
+                             "dollar Treasury yields bitcoin", "bitcoin whales institutional buying", "crypto market sell-off"],
+                    drivers=BTC_DRIVERS, junk=BTC_JUNK, links=BTC_LINKS, move_thr=0.4, cmd="btc")
+    return dict(id="gold", name="Gold", short="gold", symbol="GC=F", words=GOLD_WORDS, feeds=SYMBOL_FEEDS, queries=QUERIES,
+                drivers=DRIVERS, junk=JUNK, links=LINKS, move_thr=0.1, cmd="gold")
+
+
 def get(url, timeout=15):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -134,9 +193,9 @@ def parse_rss(data, via):
     return out
 
 
-def fetch_news(errors):
-    jobs = [(YAHOO % urllib.parse.quote(s, safe="="), "Yahoo Finance") for s in SYMBOL_FEEDS]
-    jobs += [(GOOGLE % urllib.parse.quote_plus(q + " when:3d"), "Google News") for q in QUERIES]
+def fetch_news(errors, A):
+    jobs = [(YAHOO % urllib.parse.quote(s, safe="="), "Yahoo Finance") for s in A["feeds"]]
+    jobs += [(GOOGLE % urllib.parse.quote_plus(q + " when:3d"), "Google News") for q in A["queries"]]
     items = []
     with cf.ThreadPoolExecutor(max_workers=8) as ex:
         futs = {ex.submit(get, u): (u, via) for u, via in jobs}
@@ -162,12 +221,12 @@ JUNK = re.compile(r"\b(project|drill\w*|permit|offering|warrants?|resource estim
                   r"porphyry|assay|jewel+ers?|coins?)\b", re.I)
 
 
-def classify(item, now):
+def classify(item, now, A):
     title = item["title"]
-    direct = bool(GOLD_WORDS.search(title))
+    direct = bool(A["words"].search(title))
     hits, score = [], 0.0
     macro_hit = False
-    for d in DRIVERS:
+    for d in A["drivers"]:
         if d.get("needs_gold") and (not direct or macro_hit):
             continue                       # a reported move only counts when no cause is named
         b = any(p.search(title) for p in d["bull"])
@@ -181,7 +240,7 @@ def classify(item, now):
         score += sign * d["weight"]
     if not hits and not direct:
         return None
-    if JUNK.search(title) and not macro_hit:
+    if A["junk"].search(title) and not macro_hit:
         return None
     score *= 1.25 if direct else 1.0
     score = max(-3.0, min(3.0, score))
@@ -193,7 +252,7 @@ def classify(item, now):
                 weight=0.5 ** (age_h / HALF_LIFE_H))
 
 
-def aggregate(rows):
+def aggregate(rows, A):
     num = sum(r["score"] * r["weight"] for r in rows)
     den = sum(max(abs(r["score"]), 0.5) * r["weight"] for r in rows)
     n = len(rows)
@@ -202,7 +261,7 @@ def aggregate(rows):
     label = ("Bullish" if pressure >= 25 else "Leaning bullish" if pressure >= 10 else
              "Bearish" if pressure <= -25 else "Leaning bearish" if pressure <= -10 else "Balanced")
     drivers = []
-    for d in DRIVERS:
+    for d in A["drivers"]:
         bull = sum(1 for r in rows if any(h["id"] == d["id"] and h["dir"] == "bull" for h in r["drivers"]))
         bear = sum(1 for r in rows if any(h["id"] == d["id"] and h["dir"] == "bear" for h in r["drivers"]))
         mix = sum(1 for r in rows if any(h["id"] == d["id"] and h["dir"] == "mixed" for h in r["drivers"]))
@@ -262,38 +321,40 @@ def relation(goldbars, symbol, name, kind):
                 unit="pts" if kind == "diff" else "%", thr=thr, n=len(orr))
 
 
-def market(errors):
-    gbars, _ = gold.fetch_bars("GC=F", "2y", "1d")
+def market(errors, A):
+    gbars, _ = gold.fetch_bars(A["symbol"], "2y", "1d")
     last, prev = gbars[-1][3], gbars[-2][3]
-    out = dict(gold=dict(last=last, day=(last / prev - 1) * 100, five=(last / gbars[-6][3] - 1) * 100), links=[])
-    with cf.ThreadPoolExecutor(max_workers=3) as ex:
-        futs = {ex.submit(relation, gbars, s, n, k): n for s, n, k in LINKS}
+    out = dict(base=dict(name=A["name"], symbol=A["symbol"], last=last, day=(last / prev - 1) * 100,
+                         five=(last / gbars[-6][3] - 1) * 100), links=[])
+    with cf.ThreadPoolExecutor(max_workers=4) as ex:
+        futs = {ex.submit(relation, gbars, s, n, k): n for s, n, k in A["links"]}
         for f in cf.as_completed(futs):
             try:
                 out["links"].append(f.result())
             except (SystemExit, Exception) as e:                 # one missing series should not sink the page
                 errors.append("%s unavailable: %s" % (futs[f], e))
-    order = [s for s, _, _ in LINKS]
+    order = [s for s, _, _ in A["links"]]
     out["links"].sort(key=lambda l: order.index(l["symbol"]))
     return out
 
 
-def confirm_lines(agg, mk):
+def confirm_lines(agg, mk, A):
     """Does the market agree with the news? Uses today's moves and each link's usual direction."""
     lines = []
-    g = mk["gold"]["day"]
+    g = mk["base"]["day"]
+    nm, thr = A["short"], A["move_thr"]
     lean = 1 if agg["score"] >= 10 else -1 if agg["score"] <= -10 else 0
     if lean:
-        agree = (g > 0.1 and lean > 0) or (g < -0.1 and lean < 0)
-        against = (g > 0.1 and lean < 0) or (g < -0.1 and lean > 0)
+        agree = (g > thr and lean > 0) or (g < -thr and lean < 0)
+        against = (g > thr and lean < 0) or (g < -thr and lean > 0)
         word = "bullish" if lean > 0 else "bearish"
         if agree:
-            lines.append(("good", "News leans %s and gold moved %+.2f%% today: price is confirming the news." % (word, g)))
+            lines.append(("good", "News leans %s and %s moved %+.2f%% today: price is confirming the news." % (word, nm, g)))
         elif against:
-            lines.append(("warn", "News leans %s but gold moved %+.2f%% today: price is NOT following the news. "
-                          "Either it is already priced in or something else is in charge." % (word, g)))
+            lines.append(("warn", "News leans %s but %s moved %+.2f%% today: price is NOT following the news. "
+                          "Either it is already priced in or something else is in charge." % (word, nm, g)))
         else:
-            lines.append(("flat", "News leans %s but gold barely moved today (%+.2f%%): no confirmation yet." % (word, g)))
+            lines.append(("flat", "News leans %s but %s barely moved today (%+.2f%%): no confirmation yet." % (word, nm, g)))
     else:
         lines.append(("flat", "The headlines do not lean either way, so there is nothing for price to confirm."))
     for l in mk["links"]:
@@ -302,35 +363,36 @@ def confirm_lines(agg, mk):
             continue
         expected_up = (l["day"] > 0) == (c > 0)           # direction gold "should" take from this move
         g_dir = 1 if expected_up else -1
-        moved = (g > 0.1 and g_dir > 0) or (g < -0.1 and g_dir < 0)
+        moved = (g > thr and g_dir > 0) or (g < -thr and g_dir < 0)
         mv = "%+.2f%%" % l["day"] if l["unit"] == "%" else "%+.0f bp" % (l["day"] * 100)
         lines.append(("good" if moved else "flat",
-                      "%s %s today (%s). Over 60 days gold has moved %s it (correlation %+.2f), which points to gold %s%s." % (
-                          l["name"], "rose" if l["day"] > 0 else "fell", mv, "with" if c > 0 else "against", c,
-                          "up" if g_dir > 0 else "down", ", and it did" if moved else ", but gold has not followed yet")))
+                      "%s %s today (%s). Over 60 days %s has moved %s it (correlation %+.2f), which points to %s %s%s." % (
+                          l["name"], "rose" if l["day"] > 0 else "fell", mv, nm, "with" if c > 0 else "against", c, nm,
+                          "up" if g_dir > 0 else "down", ", and it did" if moved else ", but %s has not followed yet" % nm)))
     return lines
 
 
-def build(hours):
+def build(hours, A):
     now = time.time()
     errors = []
-    items = [i for i in fetch_news(errors) if now - i["time"] <= hours * 3600]
-    rows = [r for r in (classify(i, now) for i in items) if r]
+    items = [i for i in fetch_news(errors, A) if now - i["time"] <= hours * 3600]
+    rows = [r for r in (classify(i, now, A) for i in items) if r]
     rows.sort(key=lambda r: (-abs(r["score"]) * r["weight"], r["age_h"]))
-    agg, drivers = aggregate(rows)
+    agg, drivers = aggregate(rows, A)
     try:
-        mk = market(errors)
+        mk = market(errors, A)
     except SystemExit as e:
         mk, errors = None, errors + [str(e)]
     out = dict(checked=now, hours=hours, scanned=len(items), pressure=agg, drivers=drivers, headlines=rows[:40],
-               market=mk, errors=errors)
-    out["confirm"] = confirm_lines(agg, mk) if mk else []
+               market=mk, errors=errors, asset=dict(id=A["id"], name=A["name"], short=A["short"], symbol=A["symbol"], cmd=A["cmd"]))
+    out["confirm"] = confirm_lines(agg, mk, A) if mk else []
     return out
 
 
 def render(d):
     p = d["pressure"]
-    L = ["GOLD NEWS IMPACT  (last %dh, %d headlines scanned, %d relevant)" % (d["hours"], d["scanned"], p["n"]),
+    nm = d["asset"]["short"]
+    L = ["%s NEWS IMPACT  (last %dh, %d headlines scanned, %d relevant)" % (d["asset"]["name"].upper(), d["hours"], d["scanned"], p["n"]),
          "News pressure  %+.0f  %s   (%d bullish, %d bearish, %d neutral)" % (p["score"], p["label"], p["bull"], p["bear"], p["neutral"]), ""]
     L.append("DRIVERS")
     for x in d["drivers"]:
@@ -339,10 +401,10 @@ def render(d):
     L.append("")
     if d["market"]:
         m = d["market"]
-        L.append("MARKET   gold %+.2f%% today" % m["gold"]["day"])
+        L.append("MARKET   %s %+.2f%% today" % (nm, m["base"]["day"]))
         for l in d["market"]["links"]:
-            L.append("  %-24s corr(60d) %s   gold moves %s on up days, %s on down days" % (
-                l["name"], "n/a" if l["corr60"] is None else "%+.2f" % l["corr60"],
+            L.append("  %-24s corr(60d) %s   %s moves %s on up days, %s on down days" % (
+                l["name"], "n/a" if l["corr60"] is None else "%+.2f" % l["corr60"], nm,
                 "n/a" if l["up"]["mean"] is None else "%+.2f%%" % l["up"]["mean"],
                 "n/a" if l["down"]["mean"] is None else "%+.2f%%" % l["down"]["mean"]))
         L.append("")
@@ -359,13 +421,14 @@ def render(d):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Gold news impact (read-only).")
+    ap = argparse.ArgumentParser(description="Gold or Bitcoin news impact (read-only).")
+    ap.add_argument("--asset", choices=["gold", "btc"], default="gold")
     ap.add_argument("--hours", type=float, default=36)
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if not 1 <= a.hours <= 168:
         raise SystemExit("error: --hours must be between 1 and 168")
-    d = build(a.hours)
+    d = build(a.hours, asset_cfg(a.asset))
     print(json.dumps(d) if a.json else render(d))
     return 0
 

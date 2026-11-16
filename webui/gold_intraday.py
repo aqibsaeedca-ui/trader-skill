@@ -19,6 +19,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import assets  # noqa: E402
 import gold  # noqa: E402
 
 INTRADAY = ("15m", "1h", "4h")
@@ -29,6 +30,13 @@ CFG = {                       # swing width, lookback bars, round-number step ($
     "4h": dict(k=3, win=90, step=100, name="4-hour"),
 }
 WEIGHT = {"15m": 1, "1h": 1, "4h": 2, "1d": 3, "1w": 3}
+STEP_KEY = {"15m": "m15", "1h": "h1", "4h": "h4"}
+
+
+def cfg_for(symbol):
+    """CFG with the round-number spacing that suits this asset's price."""
+    st = assets.profile(symbol)["steps"]
+    return {tf: dict(c, step=st[STEP_KEY[tf]]) for tf, c in CFG.items()}
 _cache = {}
 
 
@@ -103,17 +111,19 @@ def analyse(symbol, ttl15=60):
         raise SystemExit("error: not enough bars returned for one of the timeframes")
     bars = {"15m": m15, "1h": h1, "4h": resample(h1, 4), "1d": daily, "1w": weekly}
 
+    prof = assets.profile(symbol)
+    cfgs = cfg_for(symbol)
     own, setup = {}, {}
-    dwin, dpts, dextra = gold.short_term_inputs(daily)
-    own["1d"] = setup["1d"] = gold.compute_setups(dwin, dpts, 5, 120, dextra, 100)
+    dwin, dpts, dextra = gold.short_term_inputs(daily, prof["week"])
+    own["1d"] = setup["1d"] = gold.compute_setups(dwin, dpts, 5, 120, dextra, prof["steps"]["d"])
     wpts, wextra = gold.long_term_inputs(weekly)
-    own["1w"] = setup["1w"] = gold.compute_setups(weekly, wpts, 4, 104, wextra, 250)
+    own["1w"] = setup["1w"] = gold.compute_setups(weekly, wpts, 4, 104, wextra, prof["steps"]["w"])
 
     prev = daily[-2] if len(daily) > 1 else daily[-1]
     prev_levels = [(prev[1], "prev day high"), (prev[2], "prev day low"), (prev[3], "prev day close")]
     higher = {"4h": ("1d", "1w"), "1h": ("4h", "1d", "1w"), "15m": ("1h", "4h", "1d", "1w")}
     for tf in ("4h", "1h", "15m"):                 # high to low, so each can use the ones above
-        cfg = CFG[tf]
+        cfg = cfgs[tf]
         b = bars[tf]
         pts = trend_points(b)
         base = avg_levels(b) + ([] if tf == "4h" else prev_levels)

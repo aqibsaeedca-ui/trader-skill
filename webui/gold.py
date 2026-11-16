@@ -16,9 +16,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import assets  # noqa: E402
+
 UA = "trader-skill-gold/1.0 (+local research tool)"
-# contract size in troy ounces for the common gold futures
-OUNCES = {"GC=F": 100, "MGC=F": 10, "XAUUSD=X": 1}
 
 
 def fetch_bars(symbol, years="2y", interval="1d"):
@@ -29,7 +31,7 @@ def fetch_bars(symbol, years="2y", interval="1d"):
         with urllib.request.urlopen(req, timeout=25) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
-        raise SystemExit("error: Yahoo answered HTTP %d for %s (gold futures are GC=F)" % (e.code, symbol))
+        raise SystemExit("error: Yahoo answered HTTP %d for %s (gold futures are GC=F, Bitcoin is BTC-USD)" % (e.code, symbol))
     except (urllib.error.URLError, ValueError) as e:
         raise SystemExit("error: could not read Yahoo data: %s" % e)
     try:
@@ -62,8 +64,8 @@ def daily_returns(closes):
     return [closes[i] / closes[i - 1] - 1 for i in range(1, len(closes))]
 
 
-def ann_vol(rets):
-    return statistics.pstdev(rets) * math.sqrt(252) * 100 if len(rets) > 2 else None
+def ann_vol(rets, per_year=252):
+    return statistics.pstdev(rets) * math.sqrt(per_year) * 100 if len(rets) > 2 else None
 
 
 def ordinal(x):
@@ -82,7 +84,8 @@ def fmt(x, nd=2, pre="", suf=""):
     return "n/a" if x is None else "%s%s%s" % (pre, format(x, ",.%df" % nd), suf)
 
 
-def analyse(bars):
+def analyse(bars, per_year=252):
+    """per_year: daily bars in a year (252 trading days for futures, 365 for a 24/7 market)."""
     closes = [b[3] for b in bars]
     last = closes[-1]
     out = {"last": last, "bars": len(bars)}
@@ -90,18 +93,20 @@ def analyse(bars):
         out["sma%d" % n] = sma(closes, n)
     out["atr14"] = atr(bars)
     rets = daily_returns(closes)
-    out["vol20"] = ann_vol(rets[-20:])
-    out["vol1y"] = ann_vol(rets[-252:])
+    out["vol20"] = ann_vol(rets[-20:], per_year)
+    out["vol1y"] = ann_vol(rets[-per_year:], per_year)
     # where today's 20-day vol sits among every 20-day window in the sample
-    wins = [ann_vol(rets[i - 20:i]) for i in range(20, len(rets) + 1)]
+    wins = [ann_vol(rets[i - 20:i], per_year) for i in range(20, len(rets) + 1)]
     wins = [w for w in wins if w is not None]
     out["vol_rank"] = (sum(1 for w in wins if w <= out["vol20"]) / len(wins) * 100) if wins and out["vol20"] else None
-    yr = bars[-252:]
+    yr = bars[-per_year:]
     out["hi52"], out["lo52"] = max(b[1] for b in yr), min(b[2] for b in yr)
     out["hi20"], out["lo20"] = max(b[1] for b in bars[-20:]), min(b[2] for b in bars[-20:])
     out["hi50"], out["lo50"] = max(b[1] for b in bars[-50:]), min(b[2] for b in bars[-50:])
+    mo = per_year / 12.0
     out["ret"] = {lab: (pct(last, closes[-1 - n]) if len(closes) > n else None)
-                  for lab, n in (("1 month", 21), ("3 months", 63), ("6 months", 126), ("12 months", 252))}
+                  for lab, n in (("1 month", int(round(mo))), ("3 months", int(round(3 * mo))),
+                                 ("6 months", int(round(6 * mo))), ("12 months", per_year))}
     out["dd"] = pct(last, out["hi52"])
     return out
 
@@ -186,24 +191,26 @@ def rr_text(entry, stop, targets):
 def size_text(entry, stop, args, symbol):
     if not args.account:
         return None
+    pf = assets.profile(symbol)
+    unit, micro = pf["unit"], pf["micro"]
     risk_usd = args.account * args.risk_pct / 100
     oz = risk_usd / abs(entry - stop)
-    lot = OUNCES.get(symbol.upper())
-    s = "%s oz risks %s" % (fmt(oz, 1), fmt(risk_usd, 0, "$"))
+    lot = pf["lot"].get(symbol.upper())
+    s = "%s %s risks %s" % (fmt(oz, 3 if oz < 1 else 1), unit, fmt(risk_usd, 0, "$"))
     if lot:
-        s += " (%.2f x %s; %d whole, %d micro)" % (oz / lot, symbol.upper(), int(oz // lot), int(oz // 10))
-        if oz < 10:
-            one = 10 * abs(entry - stop)
-            s += ". One micro (10 oz) would risk %s = %s of the account" % (fmt(one, 0, "$"), fmt(one / args.account * 100, 1, suf="%"))
-    # what fits a small account: unleveraged gold (ETF / fractional shares) and the smallest spot lot
+        s += " (%.2f x %s; %d whole, %d micro)" % (oz / lot, symbol.upper(), int(oz // lot), int(oz // micro))
+    if oz < micro:
+        one = micro * abs(entry - stop)
+        s += ". One %s would risk %s = %s of the account" % (pf["micro_name"], fmt(one, 0, "$"), fmt(one / args.account * 100, 1, suf="%"))
+    # what fits a small account: unleveraged (ETF / fractional) and the smallest spot lot
     stop_pct = abs(entry - stop) / entry
     pos = risk_usd / stop_pct
-    unlev = "unleveraged (gold ETF/fractional): hold %s = %s of account" % (fmt(pos, 0, "$"), fmt(pos / args.account * 100, 0, suf="%"))
+    unlev = "unleveraged (%s): hold %s = %s of account" % (pf["etf_name"], fmt(pos, 0, "$"), fmt(pos / args.account * 100, 0, suf="%"))
     if pos > args.account:
-        unlev = "unleveraged (gold ETF): the stop is so tight that sizing to risk exceeds the account; capped at the whole account = risk %s" % fmt(args.account * stop_pct, 0, "$")
+        unlev = "unleveraged (%s): the stop is so tight that sizing to risk exceeds the account; capped at the whole account = risk %s" % (pf["etf_name"], fmt(args.account * stop_pct, 0, "$"))
     one_oz = abs(entry - stop)
-    s += "\n       Small-account fit    %s; smallest spot lot (1 oz) risks %s = %s" % (
-        unlev, fmt(one_oz, 0, "$"), fmt(one_oz / args.account * 100, 1, suf="%"))
+    s += "\n       Small-account fit    %s; smallest spot lot (%s) risks %s = %s" % (
+        unlev, pf["one_name"], fmt(one_oz, 0, "$"), fmt(one_oz / args.account * 100, 1, suf="%"))
     return s
 
 
@@ -265,7 +272,6 @@ def compute_setups(bars, trend_pts, k, fib_window, extra_levels, step, min_risk_
     return dict(last=last, atr=atr_v, bias=bias, sup=sup, res=res, setups=setups, levels=levels)
 
 
-TICK = 0.5                      # prices are snapped to $0.50 so entries read as clean numbers
 SPLIT = (0.5, 0.3, 0.2)         # share of the position closed at target 1, 2, 3
 EXPIRES = {"15m": "16 bars (4 hours)", "1h": "12 bars (half a day)", "4h": "6 bars (one day)",
            "daily": "5 sessions", "weekly": "3 weeks"}
@@ -273,15 +279,16 @@ KINDS = {("long", "pullback"): "LONG on a pullback", ("long", "breakout"): "LONG
          ("short", "pullback"): "SHORT on a rally into resistance", ("short", "breakout"): "SHORT on a breakdown"}
 
 
-def snap(x):
-    return round(x / TICK) * TICK
-
-
 def trade_plans(c, unit, key_levels=(), min_risk_atr=0.0):
     """Every candidate trade on this chart, ranked best first. Each has one entry price, one stop and
     three targets, so it can be placed as an order. Candidates: a pullback entry at each of the three
     nearest zones on the entry side, and a breakout entry at the two nearest on the other side."""
     last, atr_v, bias = c["last"], c["atr"], c["bias"]
+    tick = assets.tick_for(last)            # prices are snapped to this so entries read as clean numbers
+
+    def snap(x):
+        return round(x / tick) * tick
+
     sup, res = c["sup"], c["res"]
     conf = [l for l in key_levels if l.get("kind") == "confluence"]
 
@@ -459,7 +466,8 @@ def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, s
     add("  TOP TRADES (ranked; one entry, one stop, three targets; exit %s)" % " / ".join("%d%%" % (w * 100) for w in SPLIT))
     for p in plans[:3]:
         add("   #%d %s  grade %s  [%s, %s]" % (p["rank"], p["name"], p["grade"], p["status"], note_for_plan(p)))
-        add("       Entry %s   Stop %s (risk %s/oz)" % (fmt(p["entry"], 1, "$"), fmt(p["stop"], 1, "$"), fmt(p["risk_per_oz"], 1, "$")))
+        add("       Entry %s   Stop %s (risk %s/%s)" % (fmt(p["entry"], 1, "$"), fmt(p["stop"], 1, "$"), fmt(p["risk_per_oz"], 1, "$"),
+                                                   assets.profile(symbol)["unit"]))
         add("       Targets  " + "   ".join("T%d %s (%.1fR)" % (i, fmt(t["price"], 1, "$"), t["r"]) for i, t in enumerate(p["targets"], 1)))
         add("       %s" % p["entry_how"])
         add("       %s" % p["cancel"])
@@ -477,7 +485,7 @@ def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, s
             add("       Zone to watch for %s  %s - %s" % (who, fmt(z["lo"], 0, "$"), fmt(z["hi"], 0, "$")))
         else:
             add("       Trigger: %s close %s %s" % (unit, "above" if s["side"] == "long" else "below", fmt(s["level"], 0, "$")))
-        add("       Invalidation (stop)  %s   |   risk per oz %s" % (fmt(s["stop"], 0, "$"), fmt(abs(s["level"] - s["stop"]), 0, "$")))
+        add("       Invalidation (stop)  %s   |   risk per %s %s" % (fmt(s["stop"], 0, "$"), assets.profile(symbol)["unit"], fmt(abs(s["level"] - s["stop"]), 0, "$")))
         add("       Targets              %s" % rr_text(s["level"], s["stop"], s["targets"]))
         sz = size_text(s["level"], s["stop"], args, symbol)
         if sz:
@@ -485,13 +493,14 @@ def horizon_section(title, unit, bars, trend_pts, k, fib_window, extra_levels, s
     return L
 
 
-def short_term_inputs(daily):
-    """Trend points, 120-bar window and extra levels for the daily scenarios."""
+def short_term_inputs(daily, week=5):
+    """Trend points, 120-bar window and extra levels for the daily scenarios.
+    week: daily bars in the pivot "week" (5 trading days, 7 for a market that never closes)."""
     closes = [b[3] for b in daily]
     last = closes[-1]
     s20, s50, s200 = sma(closes, 20), sma(closes, 50), sma(closes, 200)
     pts = sum([last > s20, last > s50, last > s200, s50 > s200]) if None not in (s20, s50, s200) else 0
-    wk = daily[-6:-1]                      # prior 5 sessions as the "week"
+    wk = daily[-week - 1:-1]               # the prior week of sessions
     H, Lo, C = max(b[1] for b in wk), min(b[2] for b in wk), wk[-1][3]
     P = (H + Lo + C) / 3
     extra = [(P, "weekly pivot"), (2 * P - Lo, "pivot R1"), (2 * P - H, "pivot S1"),
@@ -533,31 +542,33 @@ def setup_dict(s, args, symbol):
              zone=[s["zone"]["lo"], s["zone"]["hi"]],
              targets=[dict(price=t, r=abs(t - s["level"]) / risk if risk else 0) for t in s["targets"]])
     if args.account and risk:
-        d["size"] = size_dict(s["level"], risk, args)
+        d["size"] = size_dict(s["level"], risk, args, symbol)
     return d
 
 
-def size_dict(level, risk, args):
+def size_dict(level, risk, args, symbol="GC=F"):
+    micro = assets.profile(symbol)["micro"]
     risk_usd = args.account * args.risk_pct / 100
     stop_pct = risk / level
     etf = min(risk_usd / stop_pct, args.account)
+    # one_oz_* is "one unit" (1 oz of gold, 1 BTC); the key names are kept so the page needs no change
     return dict(risk_usd=risk_usd, etf_usd=etf, etf_pct=etf / args.account * 100,
                 etf_capped=risk_usd / stop_pct > args.account, etf_risk=etf * stop_pct,
                 one_oz_risk=risk, one_oz_pct=risk / args.account * 100,
-                micro_risk=10 * risk, micro_pct=10 * risk / args.account * 100)
+                micro_risk=micro * risk, micro_pct=micro * risk / args.account * 100)
 
 
-def plan_dict(p, args):
+def plan_dict(p, args, symbol="GC=F"):
     d = dict(p)
     if args.account and p["risk_per_oz"]:
-        d["size"] = size_dict(p["entry"], p["risk_per_oz"], args)
+        d["size"] = size_dict(p["entry"], p["risk_per_oz"], args, symbol)
     return d
 
 
 def section_dict(c, args, symbol, unit="daily"):
     attach_plans(c, unit, key_for(symbol))
     return dict(bias=c["bias"], atr=c["atr"], last=c["last"],
-                plans=[plan_dict(p, args) for p in c["plans"]],
+                plans=[plan_dict(p, args, symbol) for p in c["plans"]],
                 sup=[zone_dict(z, c["last"], c["atr"]) for z in c["sup"]],
                 res=[zone_dict(z, c["last"], c["atr"]) for z in c["res"]],
                 setups=[setup_dict(s, args, symbol) for s in c["setups"]])
@@ -566,7 +577,8 @@ def section_dict(c, args, symbol, unit="daily"):
 def build_json(symbol, bars, a, meta, args):
     out = {"symbol": symbol, "currency": meta.get("currency", "USD"), "analysis": a,
            "trend_read": trend_read(a), "account": args.account, "risk_pct": args.risk_pct,
-           "horizon": args.horizon}
+           "horizon": args.horizon, "profile": assets.public(symbol)}
+    pf = assets.profile(symbol)
     if wants(args, "intraday"):
         try:
             import gold_intraday as gi
@@ -577,13 +589,13 @@ def build_json(symbol, bars, a, meta, args):
         except SystemExit as e:
             out["intraday_error"] = str(e)
     if wants(args, "short"):
-        win, spts, extra = short_term_inputs(bars)
-        out["short"] = section_dict(compute_setups(win, spts, 5, 120, extra, 100), args, symbol, "daily")
+        win, spts, extra = short_term_inputs(bars, pf["week"])
+        out["short"] = section_dict(compute_setups(win, spts, 5, 120, extra, pf["steps"]["d"]), args, symbol, "daily")
     if wants(args, "long"):
         try:
             weekly = weekly_bars(symbol)
             wpts, extra = long_term_inputs(weekly)
-            out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, 250), args, symbol, "weekly")
+            out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, pf["steps"]["w"]), args, symbol, "weekly")
         except SystemExit as e:
             out["long_error"] = str(e)
     extra_txt = zones_report(symbol, bars, a, args) if args.horizon != "none" else None
@@ -606,9 +618,10 @@ def zones_report(symbol, daily, a, args):
             out.append("INTRADAY SETUPS: could not load intraday data (%s)" % e)
             out.append("")
     if wants(args, "short"):
-        win, spts, extra = short_term_inputs(daily)
+        pf = assets.profile(symbol)
+        win, spts, extra = short_term_inputs(daily, pf["week"])
         out += horizon_section("SHORT-TERM ZONES (daily chart, days to a few weeks)", "daily", win, spts, 5, 120,
-                               extra, 100, args, symbol)
+                               extra, pf["steps"]["d"], args, symbol)
         out.append("")
     if wants(args, "long"):
         try:
@@ -618,7 +631,7 @@ def zones_report(symbol, daily, a, args):
             return out
         wpts, extra = long_term_inputs(weekly)
         out += horizon_section("LONG-TERM ZONES (weekly chart, weeks to months)", "weekly", weekly, wpts, 4, 104,
-                               extra, 250, args, symbol)
+                               extra, assets.profile(symbol)["steps"]["w"], args, symbol)
         out.append("")
     return out
 
@@ -649,7 +662,9 @@ def report(symbol, a, meta, args, extra=None):
     add("  52-week range     %s - %s" % (fmt(a["lo52"], pre="$"), fmt(a["hi52"], pre="$")))
     add("  From 52w high     %s     From 52w low  %s" % (fmt(a["dd"], 1, suf="%"), fmt(pct(last, a["lo52"]), 1, suf="%")))
     add("")
-    oz = OUNCES.get(symbol.upper())
+    pf = assets.profile(symbol)
+    unit = pf["unit"]
+    oz = pf["lot"].get(symbol.upper())
     stop = args.stop
     basis = "your stop"
     if stop is None and a["atr14"]:
@@ -660,17 +675,18 @@ def report(symbol, a, meta, args, extra=None):
         add("  Enter an account size (and optionally a stop distance) to see this.")
     else:
         risk_usd = args.account * args.risk_pct / 100
-        units = risk_usd / stop                     # ounces you can hold
+        units = risk_usd / stop                     # units you can hold (ounces, BTC)
         add("  Account %s, risking %s%% = %s if the stop is hit" % (fmt(args.account, 0, "$"), args.risk_pct, fmt(risk_usd, 0, "$")))
-        add("  Stop distance     %s per ounce  (%s)" % (fmt(stop, pre="$"), basis))
-        add("  Max exposure      %s oz = %s notional (%s of account)" % (fmt(units, 1), fmt(units * last, 0, "$"), fmt(units * last / args.account * 100, 0, suf="%")))
+        add("  Stop distance     %s per %s  (%s)" % (fmt(stop, pre="$"), unit, basis))
+        add("  Max exposure      %s %s = %s notional (%s of account)" % (fmt(units, 1 if units >= 1 else 4), unit, fmt(units * last, 0, "$"), fmt(units * last / args.account * 100, 0, suf="%")))
         if oz:
             add("  In contracts      %s x %s (%d oz each)  -> %s contracts, rounded down" % (
                 fmt(units / oz, 2), symbol.upper(), oz, int(units // oz)))
             if units < oz:
                 add("                    That is under one full %s contract. The micro (MGC=F, 10 oz) would be %d." % (symbol.upper(), int(units // 10)))
         add("  Stop at           long: %s    short: %s" % (fmt(last - stop, pre="$"), fmt(last + stop, pre="$")))
-        add("  Note              futures are leveraged; a gap past your stop can lose more than the amount above.")
+        add("  Note              %s" % ("futures are leveraged; a gap past your stop can lose more than the amount above." if pf["id"] == "gold"
+                                        else "crypto trades 24/7 and can gap through a stop on thin weekend liquidity; leverage can lose more than the amount above."))
     add("")
     if extra:
         L.extend(extra)
@@ -696,7 +712,7 @@ def main(argv=None):
     bars, meta = fetch_bars(args.symbol)
     if len(bars) < 60:
         raise SystemExit("error: only %d bars returned; need at least 60" % len(bars))
-    a = analyse(bars)
+    a = analyse(bars, assets.profile(args.symbol)["per_year"])
     if args.json:
         print(json.dumps(build_json(args.symbol, bars, a, meta, args), indent=1, allow_nan=False))
     else:

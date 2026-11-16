@@ -215,7 +215,8 @@ async function init(){
   commands.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
   $('#nav').innerHTML = Object.entries(groups).map(([g, cs]) =>
     '<h2>' + esc(g) + '</h2>' + cs.map(c => '<button data-id="' + c.id + '">' + esc(c.title) + '</button>').join('') +
-    (g === 'Gold' ? '<button data-id="_alerts">Gold alerts</button>' : '')).join('')
+    (g === 'Gold' ? '<button data-id="_alerts">Gold alerts</button>' : '') +
+    (g === 'Bitcoin' ? '<button data-id="_btc_alerts">Bitcoin alerts</button>' : '')).join('')
     + '<h2>Data</h2><button data-id="_files">trader/ files</button>';
   $('#nav').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.id); });
   show(location.hash.slice(1) || commands[0].id);
@@ -236,7 +237,8 @@ function show(id){
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.id === id));
   history.replaceState(null, '', '#' + id);
   if (alertTimer) { clearInterval(alertTimer); alertTimer = null; }
-  if (id === '_alerts') return showAlerts();
+  if (id === '_alerts') return showAlerts('gold');
+  if (id === '_btc_alerts') return showAlerts('btc');
   if (id === '_files') return showFiles();
   current = commands.find(c => c.id === id) || commands[0];
   const c = current;
@@ -295,6 +297,7 @@ const TREND_LABEL = {with: 'with the trend', counter: 'against the trend', range
 
 function renderGold(d){
   const g = JSON.parse(d.stdout), a = g.analysis;
+  const PF = g.profile || {id: 'gold', name: 'Gold', unit: 'oz', micro_name: 'micro future (10 oz)', one_name: '1 oz', etf_name: 'gold ETF or fractional shares', short_note: 'Short via spot/CFD only', cmd: 'gold'};
   const intra = g.intraday || {};
   const secs = {'15m': intra['15m'], '1h': intra['1h'], '4h': intra['4h'], short: g.short, long: g.long};
   const TABS = [['15m', '15-minute'], ['1h', '1-hour'], ['4h', '4-hour'], ['short', 'Daily'], ['long', 'Weekly']].filter(t => secs[t[0]]);
@@ -339,12 +342,14 @@ function renderGold(d){
       const lo = Math.min(...mp), hi = Math.max(...mp), rk = withSize[0].s.size.risk_usd;
       const fits = withSize.filter(x => x.s.size.micro_pct <= g.risk_pct * 2).length;
       bl.push('<b>Your account (' + usd(g.account) + ', risking ' + g.risk_pct + '% = ' + usd(rk) + '):</b> ' +
-        'one micro gold future (10 oz) would risk ' + (lo < 10 ? lo.toFixed(1) : Math.round(lo)) + '% to ' + Math.round(hi) + '% of the account across these setups' +
+        'one ' + PF.micro_name + ' would risk ' + (lo < 10 ? lo.toFixed(1) : Math.round(lo)) + '% to ' + Math.round(hi) + '% of the account across these setups' +
         (fits ? '; it stays within twice your limit on ' + fits + ' of ' + withSize.length + ' (the tight intraday stops)' : ', so futures do not fit') + '. ' +
-        'Longs can also be sized with a gold ETF or fractional shares; shorts need spot gold or futures.');
+        'Longs can also be sized with ' + PF.etf_name + '; shorts need ' + (PF.id === 'btc' ? 'futures, perps or margin' : 'spot gold or futures') + '.');
     }
   }
-  bl.push('<b>Reality check:</b> these zones show where price reacted before. Our 10-year backtest of these setups found no reliable edge, so treat them as a map, not a signal. <a href="#gold-backtest">Open Gold backtest</a>');
+  bl.push(PF.id === 'gold'
+    ? '<b>Reality check:</b> these zones show where price reacted before. Our 10-year backtest of these setups found no reliable edge, so treat them as a map, not a signal. <a href="#gold-backtest">Open Gold backtest</a>'
+    : '<b>Reality check:</b> these zones show where price reacted before. Run the ' + esc(PF.name) + ' backtest to see whether setups like these ever made money here, after costs, before trusting them. <a href="#' + PF.cmd + '-backtest">Open ' + esc(PF.name) + ' backtest</a>');
 
   // ---- sections
   function zr(z){ return z.hi - z.lo >= 1 ? usd(z.lo) + '–' + usd(z.hi) : usd(z.mid); }
@@ -359,33 +364,6 @@ function renderGold(d){
       ? '<div class="lad now"><span>NOW ' + usd2(s.last) + '</span><span></span><span></span><span class="sig">1 typical day ≈ ' + usd(s.atr) + '</span></div>'
       : '<div class="lad ' + t + '"><span>' + (t === 'res' ? '▲ ' : '▼ ') + zr(z) + '</span><span class="dots" title="' + z.n + ' signal(s) agree">' + dots(z.n) + '</span><span>' + pctf(z.dist_pct) + '</span><span class="sig">' + esc(z.labels.slice(0, 4).join(', ')) + (z.labels.length > 4 ? ' +' + (z.labels.length - 4) : '') + '</span></div>').join('') + '</div>';
   }
-  function setups(s, k){
-    const unit = unitOf(k);
-    return s.setups.map(x => {
-      const buy = x.side === 'long';
-      const entry = x.kind === 'pullback'
-        ? 'limit order in ' + usd(x.zone[0]) + (x.zone[1] - x.zone[0] >= 1 ? '–' + usd(x.zone[1]) : '')
-        : unit + ' close ' + (buy ? 'above ' : 'below ') + usd(x.level);
-      const tg = x.targets.length ? x.targets.map(t => '<div class="' + (t.r >= 2 ? 'r-good' : t.r >= 1.5 ? 'r-ok' : 'r-thin') + '">' + usd(t.price) + ' · ' + t.r.toFixed(1) + 'R' + (t.r < 1.5 ? ' (thin)' : '') + '</div>').join('') : '<div class="r-thin">no level beyond</div>';
-      let size = '<span class="sub">enter an account size</span>';
-      if (x.size) {
-        const z = x.size;
-        size = (buy ? (z.etf_capped ? 'Stop is tight: even the whole account in a gold ETF risks only ' + usd(z.etf_risk) + '<br>'
-                                    : 'Risk ' + usd(z.risk_usd) + ' → hold about <b>' + usd(z.etf_usd) + '</b> of gold ETF (' + Math.round(z.etf_pct) + '% of account)<br>')
-                    : 'Short via spot/CFD only (no unleveraged option)<br>') +
-          '<span class="sub">1 oz spot risks ' + usd(z.one_oz_risk) + ' (' + z.one_oz_pct.toFixed(1) + '%) · 1 micro future ' + Math.round(z.micro_pct) + '%</span>';
-      }
-      const best = Math.max(0, ...x.targets.map(t => t.r));
-      return '<div class="sc' + (best < 1.5 ? ' dim' : '') + '"><div class="top"><span class="badge2 ' + (buy ? 'buy' : 'sell') + '">' + (buy ? 'BUY' : 'SELL') + '</span>' +
-        '<span class="name">' + esc(FRIENDLY[x.name] || x.name) + '</span>' +
-        '<span class="chip ' + (x.trend === 'with' ? 'on' : '') + '">' + TREND_LABEL[x.trend] + '</span>' +
-        (x.weak ? '<span class="chip">weak zone</span>' : '') + '</div>' +
-        '<div class="grid"><div><div class="k">Enter</div><div class="v">' + esc(entry) + '</div></div>' +
-        '<div><div class="k">Stop (idea is wrong)</div><div class="v">' + usd(x.stop) + ' <span class="sub">risk ' + usd(x.risk_per_oz) + '/oz</span></div></div>' +
-        '<div><div class="k">Targets · reward</div><div class="v">' + tg + '</div></div>' +
-        '<div><div class="k">Size for your risk</div><div class="v">' + size + '</div></div></div></div>';
-    }).join('');
-  }
   function plan(x, s, k){
     const buy = x.side === 'long';
     const p0 = Math.min(x.stop, x.entry, x.targets[x.targets.length - 1].price, s.last) , p1 = Math.max(x.stop, x.entry, x.targets[x.targets.length - 1].price, s.last);
@@ -397,9 +375,10 @@ function renderGold(d){
     let size = '<span class="sub">enter an account size</span>';
     if (x.size) {
       const z = x.size;
-      size = (buy ? (z.etf_capped ? 'Whole account in gold ETF risks only ' + usd(z.etf_risk) + '<br>' : 'Risk ' + usd(z.risk_usd) + ' → about <b>' + usd(z.etf_usd) + '</b> of gold ETF (' + Math.round(z.etf_pct) + '%)<br>')
-                    : 'Short via spot/CFD only<br>') +
-        '<span class="sub">1 oz risks ' + usd(z.one_oz_risk) + ' (' + z.one_oz_pct.toFixed(1) + '%) · 1 micro ' + Math.round(z.micro_pct) + '%</span>';
+      const etf = PF.id === 'btc' ? 'spot bitcoin' : 'gold ETF';
+      size = (buy ? (z.etf_capped ? 'Whole account in ' + etf + ' risks only ' + usd(z.etf_risk) + '<br>' : 'Risk ' + usd(z.risk_usd) + ' → about <b>' + usd(z.etf_usd) + '</b> of ' + etf + ' (' + Math.round(z.etf_pct) + '%)<br>')
+                    : esc(PF.short_note) + '<br>') +
+        '<span class="sub">' + esc(PF.one_name) + ' risks ' + usd(z.one_oz_risk) + ' (' + z.one_oz_pct.toFixed(1) + '%) · 1 micro ' + Math.round(z.micro_pct) + '%</span>';
     }
     const cls = x.status === 'WAIT' ? '' : x.status === 'NEAR' ? ' near' : ' hot';
     const away = x.dist_pct;
@@ -409,7 +388,7 @@ function renderGold(d){
       '<span class="chip ' + (x.trend === 'with' ? 'on' : '') + '">' + TREND_LABEL[x.trend] + '</span>' +
       (x.agree.length ? '<span class="chip tk" title="levels from these charts overlap this zone">' + x.agree.join('+') + ' agree</span>' : '') + '</div>' + track +
       '<div class="grid"><div><div class="k">Entry</div><div class="v"><b>' + usd2(x.entry) + '</b> <span class="sub">zone ' + zr({lo: x.entry_zone[0], hi: x.entry_zone[1], mid: x.entry}) + '</span></div></div>' +
-      '<div><div class="k">Stop</div><div class="v">' + usd2(x.stop) + ' <span class="sub">risk ' + usd2(x.risk_per_oz) + '/oz</span></div></div>' +
+      '<div><div class="k">Stop</div><div class="v">' + usd2(x.stop) + ' <span class="sub">risk ' + usd2(x.risk_per_oz) + '/' + esc(PF.unit) + '</span></div></div>' +
       '<div><div class="k">Targets · reward</div><div class="v">' + tg + '</div></div>' +
       '<div><div class="k">Size for your risk</div><div class="v">' + size + '</div></div></div>' +
       '<div class="pnote"><b>How:</b> ' + esc(x.entry_how) + '</div>' +
@@ -464,6 +443,7 @@ function renderGold(d){
 
 function renderBacktest(d){
   const b = JSON.parse(d.stdout), m = b.meta, A = b.all.r1;
+  const PFB = m.profile || {name: 'Gold', unit: 'oz'};
   const R = (v, dp = 2) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(dp) + 'R';
   const day = t => new Date(t * 1000).toISOString().slice(0, 10);
 
@@ -482,8 +462,8 @@ function renderBacktest(d){
   const w = b.groups[0].stats, c = b.groups[1].stats;
   if (w && c) v.push('<b>Trend filter:</b> trades with the trend averaged ' + R(w.avg) + ', against the trend ' + R(c.avg) + '.');
   const bl = b.baseline.long, bs = b.baseline.short;
-  if (bl && bs) v.push('<b>Versus noise:</b> entering at random with no zones made ' + R(bl.avg) + ' (long) and ' + R(bs.avg) + ' (short). Gold rose ' + Math.round(m.buy_hold) + '% over the span, so long trades had a tailwind.');
-  v.push('<b>Cost of trading:</b> $' + m.cost.toFixed(2) + ' per ounce is charged on every trade. Trades overlap in time, so the band is on the optimistic side.');
+  if (bl && bs) v.push('<b>Versus noise:</b> entering at random with no zones made ' + R(bl.avg) + ' (long) and ' + R(bs.avg) + ' (short). ' + esc(PFB.name) + ' ' + (m.buy_hold >= 0 ? 'rose ' : 'fell ') + Math.abs(Math.round(m.buy_hold)) + '% over the span, so ' + (m.buy_hold >= 0 ? 'long trades had a tailwind.' : 'short trades had a tailwind.'));
+  v.push('<b>Cost of trading:</b> $' + m.cost.toFixed(2) + ' per ' + (PFB.unit === 'oz' ? 'ounce' : PFB.unit) + ' is charged on every trade. Trades overlap in time, so the band is on the optimistic side.');
 
   const kpi = (k, val, sub) => '<div class="g-tile"><div class="k">' + k + '</div><div class="v">' + val + '</div><div class="s">' + sub + '</div></div>';
   const kpis = '<div class="g-tiles">' +
@@ -575,7 +555,7 @@ function renderBacktest(d){
     '<div class="bt-h">5 · Does it hold up over time?</div><p class="bt-sub">The same rules, first half of history versus second half.</p>' + rbars(halfRows) +
     '<div class="bt-h">6 · Does it beat doing nothing clever?</div><p class="bt-sub">Entering every time with no zones, same exits and costs. A strategy must beat this by more than its whisker.</p>' + rbars(baseRows) +
     '<div class="bt-h">7 · How trades ended</div><p class="bt-sub">Most trades end at the stop (−1R); winners are fewer but larger. ' + b.hist.reduce((a, x) => a + x.n, 0) + ' trades.</p>' + histo() +
-    '<div class="note">Rules: ' + m.window + '-bar working orders, trades held at most ' + m.hold + ' bars, stop checked before target on the same bar, gaps through a stop exit at the open, $' + m.cost.toFixed(2) + '/oz cost. ' +
+    '<div class="note">Rules: ' + m.window + '-bar working orders, trades held at most ' + m.hold + ' bars, stop checked before target on the same bar, gaps through a stop exit at the open, $' + m.cost.toFixed(2) + '/' + PFB.unit + ' cost. ' +
     'Delayed Yahoo daily bars; the rules were developed looking at this same history. Past results do not predict future ones. Not financial advice.</div>' +
     '<details class="raw"><summary>Full text report</summary><pre>' + esc(b.report) + '</pre></details>';
 }
@@ -626,6 +606,7 @@ function renderNews(d){
 
 function renderGoldNews(d){
   const g = JSON.parse(d.stdout), p = g.pressure, mk = g.market;
+  const AS = g.asset || {name: 'Gold', short: 'gold', symbol: 'GC=F', cmd: 'gold'};
   const sg = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
   const cls = v => v > 0.05 ? 'gn-up' : v < -0.05 ? 'gn-dn' : 'gn-fl';
   const pcls = p.score >= 10 ? 'gn-up' : p.score <= -10 ? 'gn-dn' : 'gn-fl';
@@ -633,17 +614,17 @@ function renderGoldNews(d){
   const tile = (k, v, s, c) => '<div class="gn-tile"><div class="k">' + esc(k) + '</div><div class="v ' + c + '">' + v + '</div><div class="s">' + s + '</div></div>';
   let tiles = '';
   if (mk) {
-    tiles += tile('Gold (GC=F)', usd2(mk.gold.last), '<span class="' + cls(mk.gold.day) + '">' + sg(mk.gold.day) + '% today</span> · ' + sg(mk.gold.five) + '% 5d', '');
+    tiles += tile(AS.name + ' (' + AS.symbol + ')', usd2(mk.base.last), '<span class="' + cls(mk.base.day) + '">' + sg(mk.base.day) + '% today</span> · ' + sg(mk.base.five) + '% 5d', '');
     mk.links.forEach(l => {
       const day = l.unit === '%' ? sg(l.day) + '%' : (l.day >= 0 ? '+' : '−') + Math.abs(l.day * 100).toFixed(0) + ' bp';
       const five = l.unit === '%' ? sg(l.five) + '%' : (l.five >= 0 ? '+' : '−') + Math.abs(l.five * 100).toFixed(0) + ' bp';
       const val = l.symbol === '^TNX' ? l.last.toFixed(2) + '%' : Math.round(l.last).toLocaleString('en-US');
-      // colour by what the move usually means for gold, not by up/down
+      // colour by what the move usually means for this asset, not by up/down
       const good = l.corr60 == null ? 0 : (l.day * l.corr60);
       tiles += tile(l.name, val, '<span class="' + cls(good) + '">' + day + ' today</span> · ' + five + ' 5d', '');
     });
   }
-  const gauge = '<div class="gn-gauge"><div class="k">News pressure on gold · last ' + g.hours + 'h</div>' +
+  const gauge = '<div class="gn-gauge"><div class="k">News pressure on ' + esc(AS.short) + ' · last ' + g.hours + 'h</div>' +
     '<div class="big ' + pcls + '">' + (p.score >= 0 ? '+' : '−') + Math.abs(p.score).toFixed(0) + '</div><div class="lbl ' + pcls + '">' + esc(p.label) + '</div>' +
     '<div class="gn-bar"><i style="left:calc(' + pos.toFixed(1) + '% - 2px)"></i></div><div class="gn-scale"><span>bearish −100</span><span>0</span><span>+100 bullish</span></div>' +
     '<div class="sub" style="margin-top:8px">' + p.n + ' relevant of ' + g.scanned + ' headlines · <span class="gn-up">' + p.bull + ' bullish</span> · <span class="gn-dn">' + p.bear + ' bearish</span> · ' + p.neutral + ' neutral</div></div>';
@@ -651,7 +632,7 @@ function renderGoldNews(d){
   const confirm = g.confirm.length ? '<div class="g-h">Does the market agree with the news?</div><ul class="gn-confirm">' +
     g.confirm.map(c => '<li class="' + c[0] + '">' + (c[0] === 'good' ? '✓ ' : c[0] === 'warn' ? '⚠ ' : '· ') + esc(c[1]) + '</li>').join('') + '</ul>' : '';
 
-  const drivers = '<div class="g-h">What is driving it · bars show headline counts: green pushes gold up, red pushes it down</div><div class="gn-drivers">' +
+  const drivers = '<div class="g-h">What is driving it · bars show headline counts: green pushes ' + esc(AS.short) + ' up, red pushes it down</div><div class="gn-drivers">' +
     g.drivers.map(x => {
       const t = x.bull + x.bear + x.mixed;
       const w = n => t ? (n / t * 100).toFixed(1) + '%' : '0';
@@ -666,10 +647,10 @@ function renderGoldNews(d){
     const meaning = l => {
       const c = l.corr60;
       if (c == null) return '';
-      const s = Math.abs(c) < 0.2 ? 'Weak link lately' : (c < 0 ? 'Moves opposite gold' : 'Moves with gold');
+      const s = Math.abs(c) < 0.2 ? 'Weak link lately' : (c < 0 ? 'Moves opposite ' + AS.short : 'Moves with ' + AS.short);
       return s + (Math.abs(c) >= 0.2 ? (Math.abs(c) >= 0.5 ? ' (strong)' : ' (moderate)') : '');
     };
-    links = '<div class="g-h">How gold has reacted to other markets · measured on 2 years of daily moves</div><table class="gn-link"><thead><tr><th>Market</th><th>60-day link</th><th>Gold when it jumps</th><th>Gold when it drops</th><th>Read</th></tr></thead><tbody>' +
+    links = '<div class="g-h">How ' + esc(AS.short) + ' has reacted to other markets · measured on 2 years of daily moves</div><table class="gn-link"><thead><tr><th>Market</th><th>60-day link</th><th>' + esc(AS.name) + ' when it jumps</th><th>' + esc(AS.name) + ' when it drops</th><th>Read</th></tr></thead><tbody>' +
       mk.links.map(l => {
         const c = l.corr60 == null ? 0 : l.corr60, w = Math.abs(c) * 50;
         const bar = '<span class="gn-corr"><u></u><i style="' + (c >= 0 ? 'left:50%' : 'left:' + (50 - w) + '%') + ';width:' + w + '%;background:' + (c >= 0 ? '#0b6b4f' : '#b42318') + '"></i></span> <span class="sub">' + (l.corr60 == null ? 'n/a' : (c >= 0 ? '+' : '−') + Math.abs(c).toFixed(2)) + '</span>';
@@ -679,10 +660,10 @@ function renderGoldNews(d){
 
   const lean = p.score >= 10 ? 1 : p.score <= -10 ? -1 : 0;
   const use = '<div class="gn-use"><b>How to use this with your trade plans.</b> ' +
-    (lean > 0 ? 'News leans bullish: it adds weight to BUY plans graded A or B on the Gold assessment and argues against fading rallies. ' :
+    (lean > 0 ? 'News leans bullish: it adds weight to BUY plans graded A or B on the ' + esc(AS.name) + ' assessment and argues against fading rallies. ' :
      lean < 0 ? 'News leans bearish: it adds weight to SELL plans graded A or B and argues for caution on BUY dips. ' :
      'News is balanced: let the price levels and trade grades lead, and do not size up on news alone. ') +
-    'News never moves your stop. Headlines that hit price already show up in the move, so avoid chasing a spike; wait for the plan\'s entry. <a href="#gold">Open Gold assessment</a></div>';
+    'News never moves your stop. Headlines that hit price already show up in the move, so avoid chasing a spike; wait for the plan\'s entry. <a href="#' + AS.cmd + '">Open ' + esc(AS.name) + ' assessment</a></div>';
 
   const heads = g.headlines;
   const state = {f: 'all'};
@@ -700,7 +681,7 @@ function renderGoldNews(d){
   $('#result').innerHTML =
     '<div class="sub">checked ' + esc(new Date(g.checked * 1000).toLocaleString()) + ' · delayed prices · headlines from Yahoo Finance and Google News</div>' +
     '<div class="gn-top">' + gauge + '<div class="gn-tiles">' + tiles + '</div></div>' + confirm + use + drivers + links +
-    '<div class="g-h">Headlines ranked by likely impact on gold</div><div class="bar">' +
+    '<div class="g-h">Headlines ranked by likely impact on ' + esc(AS.short) + '</div><div class="bar">' +
     [['all', 'All'], ['high', 'High impact'], ['bullish', 'Bullish'], ['bearish', 'Bearish'], ['neutral', 'Neutral']].map(f => '<button type="button" class="chip' + (f[0] === 'all' ? ' on' : '') + '" data-gf="' + f[0] + '">' + f[1] + '</button>').join('') +
     '</div><ul class="gn-hl" id="gnl"></ul>' +
     g.errors.map(e => '<div class="note">' + esc(e) + '</div>').join('') +
@@ -713,8 +694,8 @@ function renderGoldNews(d){
   draw();
 }
 
-async function watchApi(action, extra){
-  const r = await fetch('/api/gold/watch', {method: 'POST', headers: {'Content-Type': 'application/json'},
+async function watchApi(action, extra, asset){
+  const r = await fetch('/api/' + (asset || 'gold') + '/watch', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(Object.assign({action}, extra || {}))});
   const d = await r.json();
   if (!r.ok) throw new Error(d.error || 'error');
@@ -733,13 +714,16 @@ function timeAgo(sec){
   return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
 }
 
-function showAlerts(){
+function showAlerts(asset){
+  asset = asset || 'gold';
+  const AN = asset === 'btc' ? {name: 'Bitcoin', lc: 'bitcoin', opts: ['BTC-USD']} : {name: 'Gold', lc: 'gold', opts: ['GC=F', 'MGC=F']};
   $('#main').innerHTML =
-    '<div class="card"><h3>Gold alerts</h3>' +
-    '<p>Watches delayed gold prices and notifies you when price comes near a key level or a setup trigger on the 15-minute, 1-hour and 4-hour charts. It never places orders.</p>' +
+    '<div class="card"><h3>' + AN.name + ' alerts</h3>' +
+    '<p>Watches delayed ' + AN.lc + ' prices and notifies you when price comes near a key level or a setup trigger on the 15-minute, 1-hour and 4-hour charts. It never places orders.' +
+    (asset === 'btc' ? ' Bitcoin trades around the clock, so this keeps watching nights and weekends too.' : '') + '</p>' +
     '<div class="al-stat" id="alstat"></div>' +
     '<div class="fields">' +
-      '<label>Contract<select id="al_symbol"><option>GC=F</option><option>MGC=F</option></select></label>' +
+      '<label>Contract<select id="al_symbol">' + AN.opts.map(o => '<option>' + o + '</option>').join('') + '</select></label>' +
       '<label class="check"><input type="checkbox" id="al_15m" checked> 15m</label>' +
       '<label class="check"><input type="checkbox" id="al_1h" checked> 1h</label>' +
       '<label class="check"><input type="checkbox" id="al_4h" checked> 4h</label>' +
@@ -801,10 +785,10 @@ function showAlerts(){
     }
     lastAlertId = maxId;
   };
-  const refresh = async () => { try { render(await (await fetch('/api/gold/watch')).json()); } catch (e) { /* server busy */ } };
+  const refresh = async () => { try { render(await (await fetch('/api/' + asset + '/watch')).json()); } catch (e) { /* server busy */ } };
   const act = async (action, extra, label) => {
     const btn = label && $('#' + label); if (btn) btn.disabled = true;
-    try { render(await watchApi(action, extra)); } catch (e) { $('#alstat').insertAdjacentHTML('beforeend', '<span class="g-down">' + esc(e.message) + '</span>'); }
+    try { render(await watchApi(action, extra, asset)); } catch (e) { $('#alstat').insertAdjacentHTML('beforeend', '<span class="g-down">' + esc(e.message) + '</span>'); }
     if (btn) btn.disabled = false;
   };
   $('#al_start').onclick = () => { beep(); act('start', {settings: readForm()}, 'al_start'); };

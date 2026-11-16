@@ -26,6 +26,7 @@ import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import assets  # noqa: E402
 import gold  # noqa: E402
 
 WARMUP = 250
@@ -140,11 +141,14 @@ def main(argv=None):
     ap.add_argument("--years", default="10y", choices=["2y", "5y", "10y"])
     ap.add_argument("--window", type=int, default=10, help="bars an order stays working")
     ap.add_argument("--hold", type=int, default=20, help="max bars to hold a trade")
-    ap.add_argument("--cost", type=float, default=0.5, help="round-trip cost in $ per ounce")
+    ap.add_argument("--cost", type=float, default=None, help="round-trip cost in $ per unit (oz or BTC); default depends on the asset")
     ap.add_argument("--json", action="store_true", help="structured output for the web view")
     args = ap.parse_args(argv)
-    if not (1 <= args.window <= 60 and 1 <= args.hold <= 120 and 0 <= args.cost <= 50):
-        raise SystemExit("error: window 1-60, hold 1-120, cost 0-50")
+    pf = assets.profile(args.symbol)
+    if args.cost is None:
+        args.cost = pf["default_cost"]
+    if not (1 <= args.window <= 60 and 1 <= args.hold <= 120 and 0 <= args.cost <= pf["max_cost"]):
+        raise SystemExit("error: window 1-60, hold 1-120, cost 0-%g" % pf["max_cost"])
 
     bars, _ = gold.fetch_bars(args.symbol, args.years)
     if len(bars) < WARMUP + 100:
@@ -152,8 +156,8 @@ def main(argv=None):
 
     busy, trades = {}, []
     for t in range(WARMUP, len(bars) - 2):
-        win, pts, extra = gold.short_term_inputs(bars[:t + 1])
-        c = gold.compute_setups(win, pts, 5, 120, extra, 100)
+        win, pts, extra = gold.short_term_inputs(bars[:t + 1], pf["week"])
+        c = gold.compute_setups(win, pts, 5, 120, extra, pf["steps"]["d"])
         for s in c["setups"]:
             key = s["name"]
             if busy.get(key, -1) >= t:
@@ -171,9 +175,9 @@ def main(argv=None):
     bh = (bars[-1][3] / bars[WARMUP][3] - 1) * 100
     L = []
     add = L.append
-    add("GOLD BACKTEST  %s  %s to %s  (%d daily bars, walk-forward, no look-ahead)" % (args.symbol, first, lastd, len(bars) - WARMUP))
-    add("Order stays working %d bars, trade held at most %d bars, cost $%.2f/oz round trip. Buy-and-hold over the span: %+.0f%%." % (
-        args.window, args.hold, args.cost, bh))
+    add("%s BACKTEST  %s  %s to %s  (%d daily bars, walk-forward, no look-ahead)" % (pf["name"].upper(), args.symbol, first, lastd, len(bars) - WARMUP))
+    add("Order stays working %d bars, trade held at most %d bars, cost $%.2f/%s round trip. Buy-and-hold over the span: %+.0f%%." % (
+        args.window, args.hold, args.cost, pf["unit"], bh))
     add("R = profit divided by the initial risk to the stop. avg R above 0 = made money per unit of risk.")
     add("95% = rough +/- band on avg R (1.96 standard errors); if it spans zero the result is not distinguishable from luck.")
     add("The band is optimistic: trades from different setups overlap in time, so they are not fully independent.")
@@ -259,7 +263,7 @@ def main(argv=None):
     data = dict(
         meta=dict(symbol=args.symbol, first=first, last=lastd, bars=len(bars) - WARMUP, window=args.window,
                   hold=args.hold, cost=args.cost, buy_hold=bh, trades=len(trades), t0=trades[0]["t"] if trades else None,
-                  t1=trades[-1]["t"] if trades else None),
+                  t1=trades[-1]["t"] if trades else None, profile=assets.public(args.symbol)),
         setups=[dict(name=n, r1=js([x["r1"] for x in pool1 if x["name"] == n]),
                      r2=js([x["r2"] for x in pool2 if x["name"] == n])) for n in names],
         all=dict(r1=js([x["r1"] for x in pool1]), r2=js([x["r2"] for x in pool2])),

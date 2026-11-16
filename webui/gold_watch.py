@@ -27,6 +27,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import assets  # noqa: E402
 import gold  # noqa: E402
 import gold_intraday as gi  # noqa: E402
 
@@ -46,11 +47,23 @@ FRIENDLY = {
 }
 
 
-def clean_settings(raw):
+def defaults(asset):
+    return dict(DEFAULTS, symbol=asset["symbols"][0])
+
+
+def files(asset):
+    """Gold keeps its original file names; other assets get their own pair."""
+    if asset["id"] == "gold":
+        return SETTINGS_FILE, LOG_FILE
+    return (os.path.join(TRADER, asset["id"] + "_watch.json"), os.path.join(TRADER, asset["id"] + "_alerts.json"))
+
+
+def clean_settings(raw, asset=None):
     """Validate untrusted settings; unknown or bad values fall back to defaults."""
-    s = dict(DEFAULTS)
+    asset = asset or assets.GOLD
+    s = defaults(asset)
     raw = raw if isinstance(raw, dict) else {}
-    if raw.get("symbol") in ("GC=F", "MGC=F"):
+    if raw.get("symbol") in asset["symbols"] and raw.get("symbol") != "XAUUSD=X":
         s["symbol"] = raw["symbol"]
     tfs = [t for t in (raw.get("tfs") or []) if t in gi.INTRADAY]
     if tfs:
@@ -179,7 +192,9 @@ def evaluate(res, settings, state, now):
 
 
 class Watcher:
-    def __init__(self):
+    def __init__(self, asset=None):
+        self.asset = asset or assets.GOLD
+        self.settings_file, self.log_file = files(self.asset)
         self.lock = threading.Lock()
         self.settings = self._load_settings()
         self.alerts = deque(self._load_log(), maxlen=200)
@@ -196,14 +211,14 @@ class Watcher:
     # ---- persistence (best effort)
     def _load_settings(self):
         try:
-            with open(SETTINGS_FILE, encoding="utf-8") as f:
-                return clean_settings(json.load(f))
+            with open(self.settings_file, encoding="utf-8") as f:
+                return clean_settings(json.load(f), self.asset)
         except (OSError, ValueError):
-            return dict(DEFAULTS)
+            return defaults(self.asset)
 
     def _load_log(self):
         try:
-            with open(LOG_FILE, encoding="utf-8") as f:
+            with open(self.log_file, encoding="utf-8") as f:
                 data = json.load(f)
             return [a for a in data if isinstance(a, dict)][-200:]
         except (OSError, ValueError):
@@ -222,9 +237,9 @@ class Watcher:
     # ---- control
     def configure(self, raw):
         with self.lock:
-            self.settings = clean_settings(raw)
+            self.settings = clean_settings(raw, self.asset)
             self.state = {}                       # new rules, fresh start
-        self._save(SETTINGS_FILE, self.settings)
+        self._save(self.settings_file, self.settings)
 
     def start(self):
         with self.lock:
@@ -232,7 +247,7 @@ class Watcher:
                 return
             self.running = True
             self.stop_evt.clear()
-            self.thread = threading.Thread(target=self._loop, daemon=True, name="gold-watch")
+            self.thread = threading.Thread(target=self._loop, daemon=True, name=self.asset["id"] + "-watch")
             self.thread.start()
 
     def stop(self):
@@ -266,11 +281,11 @@ class Watcher:
                     self.alerts.append(a)
                 log = list(self.alerts)
             if new:
-                self._save(LOG_FILE, log)
+                self._save(self.log_file, log)
                 if settings["toast"]:
                     head = new[0]
                     more = " (+%d more)" % (len(new) - 1) if len(new) > 1 else ""
-                    toast("Gold alert " + head["title"][:60], head["body"][:140] + more)
+                    toast(self.asset["name"] + " alert " + head["title"][:60], head["body"][:140] + more)
             return new
         except (Exception, SystemExit) as e:          # SystemExit comes from the data fetcher
             with self.lock:
@@ -287,15 +302,15 @@ class Watcher:
             self.alerts.append(a)
             settings = dict(self.settings)
             log = list(self.alerts)
-        self._save(LOG_FILE, log)
+        self._save(self.log_file, log)
         if settings["toast"]:
-            toast("Gold alert test", a["body"])
+            toast(self.asset["name"] + " alert test", a["body"])
         return a
 
     def clear(self):
         with self.lock:
             self.alerts.clear()
-        self._save(LOG_FILE, [])
+        self._save(self.log_file, [])
 
     def status(self):
         with self.lock:
