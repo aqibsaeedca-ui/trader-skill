@@ -11,6 +11,7 @@ model that fails its gate is reported as not validated; nothing is tuned until i
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -142,6 +143,11 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
                                 decided_range=(wf["train_min"], r["split"])) if chosen is not None else []
         v = bt.verdict(r, stress_rows)
         oos = r["oos_trades"]
+        full = bt.run_strategy(bars, name, chosen or {}, c, exec_cfg, step, HTF.get(interval), ev_high)
+        rejections = {}
+        for rj in full["rejected"]:
+            why = re.sub(r"\d+(\.\d+)?", "#", rj["reason"])                  # group "5 bars" and "7 bars" together
+            rejections[why] = rejections.get(why, 0) + 1
         pvals[name] = (r["bootstrap"] or {}).get("p_le_zero", 1.0)
         results[name] = dict(
             status=v["status"], reasons=v["reasons"], checks=v["checks"], oos=r["oos"], holdout=r["holdout"], stress=stress_rows,
@@ -149,6 +155,7 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
             folds=[{k: v2 for k, v2 in f.items()} for f in r["folds"]], equity=equity_curve(oos),
             by_side=bt.segment(oos, lambda t: t["side"]), by_session=bt.segment(oos, lambda t: t["session"]),
             by_regime=bt.segment(oos, lambda t: t["regime"]), grid_oos=r["all_param_summaries"],
+            signals_total=len(full["signals"]), trades_total=len(full["trades"]), rejections=dict(sorted(rejections.items(), key=lambda kv: -kv[1])),
             news_filter=macro.evaluate_news_filter(oos, ev) if ev else dict(verdict="no events stored: run macro.py fetch-fomc and add-nfp", recommended=False),
             record=bt.run_record(bars, name, symbol, interval, c, exec_cfg, wf, bt.GATE_DEFAULTS, seed, dict(params=chosen)))
     names = list(results)
