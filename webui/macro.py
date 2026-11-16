@@ -333,6 +333,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("show")
     sub.add_parser("fetch-fomc", help="read the Fed's public calendar page")
+    sub.add_parser("update", help="official FOMC dates plus derived NFP dates for the last and next year")
     n = sub.add_parser("add-nfp", help="add derived NFP dates")
     n.add_argument("--from-year", type=int, default=dt.date.today().year - 1)
     n.add_argument("--to-year", type=int, default=dt.date.today().year + 1)
@@ -344,7 +345,14 @@ def main(argv=None):
     a = ap.parse_args(argv)
     now = time.time()
     ev = load_store()
-    if a.cmd == "fetch-fomc":
+    if a.cmd == "update":
+        new = fetch_fomc()
+        yr = dt.date.today().year
+        ev = merge(merge(ev, new), nfp_dates(yr - 1, yr + 1))
+        save_store(ev)
+        print("FOMC: %d official events from federalreserve.gov. NFP: derived dates added and marked derived (verify at bls.gov). "
+              "%d events stored. Add CPI and PCE with import-csv." % (len(new), len(ev)))
+    elif a.cmd == "fetch-fomc":
         new = fetch_fomc()
         ev = merge(ev, new)
         save_store(ev)

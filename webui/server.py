@@ -18,8 +18,15 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assets  # noqa: E402
-import gold_watch  # noqa: E402  (same folder; the watcher never places orders)
+import backtester  # noqa: E402
+import gold_watch  # noqa: E402
+import journal  # noqa: E402
+import ml  # noqa: E402
+import portfolio  # noqa: E402
+import research  # noqa: E402
+import strategies  # noqa: E402  (same folder; none of these modules can place an order)
 
 ROOT = Path(__file__).resolve().parent.parent
 WATCHERS = {"gold": gold_watch.Watcher(), "btc": gold_watch.Watcher(assets.BTC)}   # one per asset, never place orders
@@ -44,6 +51,36 @@ def P(name, label, kind="text", default="", flag=None, choices=None,
 # id, group, title, what it does, script + fixed args, params
 COMMANDS = [
     # ---- gold
+    dict(id="intel", group="Gold", title="Gold intelligence",
+         help="Market overview, strategy assessments with NO TRADE gates, portfolio risk monitor, performance evidence and the trading "
+              "journal. A strategy is only allowed to say LONG or SHORT after it passed out-of-sample validation. Read-only.",
+         script="webui/intelligence.py", fixed=["--json"], view="intel",
+         params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F", "BTC-USD"]),
+                 P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m"]),
+                 P("risk", "Risk per trade (%)", "number", "1", "--risk-pct")]),
+    dict(id="research", group="Gold", title="Gold research run",
+         help="Walk-forward test of the four strategies with a final untouched holdout, cost stress, news-filter test and a calibrated "
+              "model, saved as a reproducible record. Costs are placeholders unless you enter your broker's. Takes about 10 seconds.",
+         script="webui/research.py", fixed=["run"],
+         params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F", "BTC-USD", "XAUUSD"]),
+                 P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m", "1d", "5m"]),
+                 P("source", "Data", "select", "yahoo", "--source", choices=["yahoo", "dukascopy", "oanda"]),
+                 P("spread", "Spread (price units, blank = placeholder)", "number", "", "--spread"),
+                 P("slippage", "Slippage per side (price units)", "number", "", "--slippage"),
+                 P("quick", "Quick (smaller model)", "check", flag="--quick")]),
+    dict(id="macro-show", group="Gold", title="Economic events",
+         help="The stored calendar with where each date came from and how reliable it is. FOMC dates are official, NFP dates are derived "
+              "from the BLS rule, anything else comes from your own CSV.",
+         script="webui/macro.py", fixed=["show"], params=[]),
+    dict(id="macro-update", group="Gold", title="Update economic events",
+         help="One request to federalreserve.gov for FOMC dates, plus derived NFP dates marked as derived. BLS blocks automated downloads, "
+              "so CPI and PCE need your own CSV (macro.py import-csv).",
+         script="webui/macro.py", fixed=["update"], params=[]),
+    dict(id="macro-study", group="Gold", title="Event reactions",
+         help="How gold actually behaved after past releases, against how it behaves on any bar. Observed behaviour only, not cause.",
+         script="webui/macro.py", fixed=["study"],
+         params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F"]),
+                 P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m", "1d"])]),
     dict(id="gold", group="Gold", title="Gold assessment",
          help="Trend, volatility, levels and a risk-based position size from delayed Yahoo daily bars. "
               "Read-only; statistics describe the past and do not predict price.",
@@ -302,6 +339,68 @@ def watch_action(body, asset="gold"):
     return w.status()
 
 
+SID = re.compile(r"^[a-z_]{3,30}-[A-Za-z0-9]{2,6}-\d{9,11}-(long|short)-[0-9a-f]{6}$")
+
+
+def _f(v, name, optional=False):
+    if v is None and optional:
+        return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or abs(v) > 1e12:
+        raise BadInput("%s must be a number" % name)
+    return float(v)
+
+
+def portfolio_action(body):
+    """Store the positions, pending orders and limits you typed in. Validated; read-only arithmetic only."""
+    if body.get("action") == "get":
+        return portfolio.load()
+    try:
+        return portfolio.save(body.get("state"))
+    except ValueError as e:
+        raise BadInput(str(e))
+
+
+def journal_action(body):
+    """Append to the local trading journal. Nothing here touches a broker."""
+    action = str(body.get("action", ""))
+    try:
+        if action == "get":
+            ent = journal.load()
+            return dict(entries=journal.recent(ent, 40), summary=journal.analyse(ent))
+        if action == "add_signal":
+            s = body.get("signal") or {}
+            if not SID.match(str(s.get("id", ""))) or s.get("strategy") not in strategies.STRATEGIES or s.get("side") not in ("long", "short"):
+                raise BadInput("not a valid signal")
+            sig = dict(id=s["id"], strategy=s["strategy"], side=s["side"], decided_t=int(_f(s.get("decided_t"), "decided_t")), price=_f(s.get("price"), "price"),
+                       stop=_f(s.get("stop"), "stop"), targets=[_f(t, "target") for t in (s.get("targets") or [])[:5]],
+                       note=str(s.get("note", ""))[:300], invalidation=str(s.get("invalidation", ""))[:300], regime=str(s.get("regime", ""))[:30])
+            for k in ("note", "invalidation"):
+                if not journal.TEXT.match(sig[k]):
+                    raise BadInput("%s has unsupported characters" % k)
+            sym, iv = str(body.get("symbol", "")), str(body.get("interval", ""))
+            if sym not in ("GC=F", "MGC=F", "BTC-USD") or iv not in ("60m", "15m"):
+                raise BadInput("unknown market or interval")
+            val = research.load_validation().get(research.key(sym, iv)) or {}
+            srec = (val.get("strategies") or {}).get(sig["strategy"]) or {}
+            model = ml.latest_accepted(sym, iv)
+            reasons = [str(r)[:200] for r in (body.get("reasons") or [])[:10]]
+            ctx = dict(symbol=sym, interval=iv, code_version=backtester.code_version(), strategy_status=srec.get("status", "NOT RUN"),
+                       model_id=model["id"] if model else None, data_ref=dict((val.get("data") or {}), checked=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())) if val else None)
+            return journal.add_signal(sig, str(body.get("decision", "")), reasons, ctx)
+        sid = str(body.get("id", ""))
+        if not SID.match(sid):
+            raise BadInput("not a valid signal id")
+        if action == "fill":
+            return journal.record_fill(sid, _f(body.get("price"), "price"), _f(body.get("units"), "units"))
+        if action == "close":
+            tags = [t for t in str(body.get("tags", "")).split(",") if t.strip()]
+            return journal.close_trade(sid, _f(body.get("price"), "price"), notes=str(body.get("notes", ""))[:500], tags=[t.strip() for t in tags][:8],
+                                       stop_moved=bool(body.get("stop_moved")))
+    except (ValueError, KeyError) as e:
+        raise BadInput(str(e)[:200])
+    raise BadInput("unknown action")
+
+
 def list_files():
     if not TRADER_DIR.is_dir():
         return []
@@ -354,6 +453,11 @@ class Handler(BaseHTTPRequestHandler):
         m = WATCH_PATH.match(path)
         if m:
             return self._json(200, WATCHERS[m.group(1)].status())
+        if path == "/api/portfolio":
+            return self._json(200, portfolio.load())
+        if path == "/api/journal":
+            ent = journal.load()
+            return self._json(200, dict(entries=journal.recent(ent, 40), summary=journal.analyse(ent)))
         if path == "/api/files":
             return self._json(200, {"files": list_files()})
         if path == "/api/file":
@@ -368,7 +472,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._json(403, {"error": "bad host"})
         wm = WATCH_PATH.match(self.path)
-        if self.path != "/api/run" and not wm:
+        if self.path not in ("/api/run", "/api/portfolio", "/api/journal") and not wm:
             return self._json(404, {"error": "not found"})
         # JSON content type forces a CORS preflight, which we never grant,
         # so other websites cannot trigger runs from the user's browser.
@@ -384,6 +488,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("body must be an object")
             if wm:
                 return self._json(200, watch_action(body, wm.group(1)))
+            if self.path == "/api/portfolio":
+                return self._json(200, portfolio_action(body))
+            if self.path == "/api/journal":
+                return self._json(200, journal_action(body))
             result = run_command(str(body.get("id", "")), body.get("values") or {})
         except BadInput as e:
             return self._json(400, {"error": str(e)})
