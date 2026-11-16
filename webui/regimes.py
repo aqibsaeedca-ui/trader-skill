@@ -404,6 +404,41 @@ def analyse(bars, cfg=None, volumes=None, event_times=None, interval_sec=None):
     return Analysis(bars, cfg, volumes, event_times, interval_sec).run()
 
 
+class HTF:
+    """Higher-timeframe context built from the base bars, usable without look-ahead.
+
+    Base bars are grouped into UTC-aligned blocks of htf_sec seconds. at(i) returns the snapshot of the last block
+    that had fully CLOSED by the end of base bar i, so a half-built higher bar is never seen."""
+
+    def __init__(self, bars, htf_sec, cfg=None, event_times=None):
+        self.step = interval_seconds(bars)
+        self.htf_sec = htf_sec
+        keys, hb = [], []
+        for t, h, l, c, o in bars:
+            k = t // htf_sec
+            if not keys or keys[-1] != k:
+                keys.append(k)
+                hb.append([t, h, l, c, o])
+            else:
+                b = hb[-1]
+                b[1], b[2], b[3] = max(b[1], h), min(b[2], l), c
+        self.keys = keys
+        self.bars = [tuple(b) for b in hb]
+        self.analysis = Analysis(self.bars, cfg, event_times=event_times, interval_sec=htf_sec).run()
+        index = {k: j for j, k in enumerate(keys)}
+        self.map = []
+        for t, *_ in bars:
+            k = t // htf_sec
+            if t + self.step >= (k + 1) * htf_sec:
+                self.map.append(index[k])                    # this base bar is the last of its block: block is closed
+            else:
+                self.map.append(index[k] - 1 if index[k] > 0 else None)
+
+    def at(self, i):
+        j = self.map[i]
+        return self.analysis.snaps[j] if j is not None else None
+
+
 def regime_diagnostics(bars, horizon=10, cfg=None):
     """Does each regime label separate what happens next? Per label: bars, mean |forward move| in ATRs and the
     mean forward move in the direction of the label (persistence). Research output; makes no claim by itself."""
