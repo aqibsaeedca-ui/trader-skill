@@ -984,6 +984,10 @@ function showAlerts(asset){
       '<label>Notify when within (ATR)<input type="number" id="al_near" step="0.1" min="0.1" max="3" value="0.5"></label>' +
       '<label>Check every<select id="al_poll"><option value="2">2 min</option><option value="5" selected>5 min</option><option value="10">10 min</option><option value="15">15 min</option></select></label>' +
       '<label class="check"><input type="checkbox" id="al_toast" checked> Windows notification</label>' +
+      '<label class="check" title="Confirmed validated setups, invalidations, regime changes, high-impact events, stale data, exposure, loss limit, unprotected positions, conflicting orders"><input type="checkbox" id="al_intel" checked> Intelligence alerts</label>' +
+      '<label>Warn before events (min)<input type="number" id="al_lead" step="5" min="5" max="240" value="30"></label>' +
+      '<label>Max extra alerts / hour<input type="number" id="al_cap" step="1" min="1" max="60" value="12"></label>' +
+      '<label>Repeat after (min)<input type="number" id="al_cool" step="10" min="10" max="720" value="60"></label>' +
     '</div>' +
     '<div class="bar"><button class="run" type="button" id="al_start">Start watching</button>' +
       '<button class="chip" type="button" id="al_stop">Stop</button>' +
@@ -1001,11 +1005,16 @@ function showAlerts(asset){
     tfs: ['15m', '1h', '4h'].filter(t => $('#al_' + t).checked),
     near_atr: parseFloat($('#al_near').value),
     poll_min: parseInt($('#al_poll').value, 10),
-    toast: $('#al_toast').checked
+    toast: $('#al_toast').checked,
+    intel: $('#al_intel').checked,
+    event_lead_min: parseInt($('#al_lead').value, 10),
+    max_alerts_per_hour: parseInt($('#al_cap').value, 10),
+    extras_cooldown_min: parseInt($('#al_cool').value, 10)
   });
   const fillForm = s => {
     $('#al_symbol').value = s.symbol; ['15m', '1h', '4h'].forEach(t => $('#al_' + t).checked = s.tfs.includes(t));
     $('#al_near').value = s.near_atr; $('#al_poll').value = String(s.poll_min); $('#al_toast').checked = s.toast;
+    $('#al_intel').checked = !!s.intel; $('#al_lead').value = s.event_lead_min; $('#al_cap').value = s.max_alerts_per_hour; $('#al_cool').value = s.extras_cooldown_min;
   };
   const render = st => {
     if (!formLoaded) { fillForm(st.settings); formLoaded = true; }
@@ -1013,6 +1022,8 @@ function showAlerts(asset){
       (st.snapshot ? '<span><b>' + usd2(st.snapshot.price) + '</b> <span class="sub">last 15m close, delayed</span></span>' : '') +
       (st.last_check ? '<span class="sub">checked ' + timeAgo(st.last_check) + '</span>' : '') +
       (st.running && st.next_check ? '<span class="sub">next in ' + Math.max(0, Math.round((st.next_check - st.now) / 60)) + ' min</span>' : '') +
+      (st.live_setups ? '<span class="sub">' + st.live_setups + ' confirmed setup(s) being tracked</span>' : '') +
+      (st.suppressed ? '<span class="sub">' + st.suppressed + ' alert(s) held back by your hourly cap</span>' : '') +
       (st.error ? '<span class="g-down">Last error: ' + esc(st.error) + '</span>' : '');
     const near = st.settings.near_atr;
     const cell = (l) => {
@@ -1055,7 +1066,7 @@ function showAlerts(asset){
     const p = await Notification.requestPermission();
     $('#al_perm').textContent = p === 'granted' ? 'Browser notifications on' : 'Notifications ' + p;
   };
-  ['al_symbol', 'al_15m', 'al_1h', 'al_4h', 'al_near', 'al_poll', 'al_toast'].forEach(id =>
+  ['al_symbol', 'al_15m', 'al_1h', 'al_4h', 'al_near', 'al_poll', 'al_toast', 'al_intel', 'al_lead', 'al_cap', 'al_cool'].forEach(id =>
     $('#' + id).addEventListener('change', () => act('settings', {settings: readForm()})));
   if ('Notification' in window && Notification.permission === 'granted') $('#al_perm').textContent = 'Browser notifications on';
   lastAlertId = null;

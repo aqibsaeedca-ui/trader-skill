@@ -30,13 +30,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assets  # noqa: E402
 import gold  # noqa: E402
 import gold_intraday as gi  # noqa: E402
+import watch_extras  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRADER = os.path.join(ROOT, "trader")
 SETTINGS_FILE = os.path.join(TRADER, "gold_watch.json")
 LOG_FILE = os.path.join(TRADER, "gold_alerts.json")
 
-DEFAULTS = dict(symbol="GC=F", tfs=["15m", "1h", "4h"], near_atr=0.5, poll_min=5, toast=True)
+DEFAULTS = dict(symbol="GC=F", tfs=["15m", "1h", "4h"], near_atr=0.5, poll_min=5, toast=True,
+                intel=True, event_lead_min=30, max_alerts_per_hour=12, extras_cooldown_min=60)
 COOLDOWN_MIN = {"15m": 30, "1h": 90, "4h": 240}
 POLLS = (2, 5, 10, 15)
 FRIENDLY = {
@@ -48,7 +50,8 @@ FRIENDLY = {
 
 
 def defaults(asset):
-    return dict(DEFAULTS, symbol=asset["symbols"][0])
+    """Intelligence alerts default on for gold only, so Bitcoin alerts behave exactly as before unless switched on."""
+    return dict(DEFAULTS, symbol=asset["symbols"][0], intel=(asset["id"] == "gold"))
 
 
 def files(asset):
@@ -82,6 +85,15 @@ def clean_settings(raw, asset=None):
         pass
     if isinstance(raw.get("toast"), bool):
         s["toast"] = raw["toast"]
+    if isinstance(raw.get("intel"), bool):
+        s["intel"] = raw["intel"]
+    for key, lo, hi in (("event_lead_min", 5, 240), ("max_alerts_per_hour", 1, 60), ("extras_cooldown_min", 10, 720)):
+        try:
+            v = int(raw.get(key, s[key]))
+            if lo <= v <= hi:
+                s[key] = v
+        except (TypeError, ValueError):
+            pass
     return s
 
 
@@ -196,9 +208,11 @@ class Watcher:
         self.asset = asset or assets.GOLD
         self.settings_file, self.log_file = files(self.asset)
         self.lock = threading.Lock()
+        self.state_file = os.path.join(TRADER, self.asset["id"] + "_watch_state.json")
         self.settings = self._load_settings()
         self.alerts = deque(self._load_log(), maxlen=200)
         self.state = {}
+        self.xstate = self._load_xstate()                 # saved, so a restart does not repeat old intelligence alerts
         self.running = False
         self.thread = None
         self.stop_evt = threading.Event()
@@ -215,6 +229,18 @@ class Watcher:
                 return clean_settings(json.load(f), self.asset)
         except (OSError, ValueError):
             return defaults(self.asset)
+
+    def _load_xstate(self):
+        try:
+            with open(self.state_file, encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict) and isinstance(d.get("fired"), dict) and isinstance(d.get("live"), dict):
+                base = watch_extras.new_state()
+                base.update({k: d[k] for k in base if k in d})
+                return base
+        except (OSError, ValueError):
+            pass
+        return watch_extras.new_state()
 
     def _load_log(self):
         try:
@@ -237,8 +263,11 @@ class Watcher:
     # ---- control
     def configure(self, raw):
         with self.lock:
+            old_symbol = self.settings["symbol"]
             self.settings = clean_settings(raw, self.asset)
             self.state = {}                       # new rules, fresh start
+            if self.settings["symbol"] != old_symbol:
+                self.xstate = watch_extras.new_state()
         self._save(self.settings_file, self.settings)
 
     def start(self):
@@ -271,10 +300,22 @@ class Watcher:
         try:
             res = gi.analyse(settings["symbol"])
             now = time.time()
+            extra, extra_err = [], ""
+            if settings.get("intel"):
+                try:                                       # a failure here must never silence the level alerts
+                    import intelligence
+                    intel = intelligence.build(settings["symbol"], "60m", now=now,
+                                               bars={"15m": res["bars"]["15m"], "60m": res["bars"]["1h"], "1d": res["bars"]["1d"]})
+                    with self.lock:
+                        extra = watch_extras.evaluate(intel, settings, self.xstate, now)
+                        xs = json.loads(json.dumps(self.xstate))
+                    self._save(self.state_file, xs)
+                except (Exception, SystemExit) as e:
+                    extra_err = "intelligence alerts unavailable: %s" % str(e)[:160]
             with self.lock:
-                new = evaluate(res, settings, self.state, now)
+                new = evaluate(res, settings, self.state, now) + extra
                 self.snap = snapshot(res, settings["tfs"])
-                self.last_check, self.last_error = now, ""
+                self.last_check, self.last_error = now, extra_err
                 for a in new:
                     self.seq += 1
                     a["id"] = self.seq
@@ -316,7 +357,8 @@ class Watcher:
         with self.lock:
             return dict(running=self.running, settings=dict(self.settings), last_check=self.last_check,
                         next_check=self.next_check, error=self.last_error, snapshot=self.snap,
-                        alerts=list(self.alerts)[::-1][:60], now=time.time())
+                        alerts=list(self.alerts)[::-1][:60], now=time.time(),
+                        suppressed=self.xstate.get("suppressed", 0), live_setups=len(self.xstate.get("live", {})))
 
 
 if __name__ == "__main__":
