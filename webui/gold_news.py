@@ -386,6 +386,11 @@ def build(hours, A):
     out = dict(checked=now, hours=hours, scanned=len(items), pressure=agg, drivers=drivers, headlines=rows[:40],
                market=mk, errors=errors, asset=dict(id=A["id"], name=A["name"], short=A["short"], symbol=A["symbol"], cmd=A["cmd"]))
     out["confirm"] = confirm_lines(agg, mk, A) if mk else []
+    try:                                  # scheduled releases from the stored calendar; reactions live on the Event reactions page
+        import macro
+        out["macro"] = macro.summary(now)
+    except Exception:                     # the calendar is optional context and must never break the news page
+        out["macro"] = None
     return out
 
 

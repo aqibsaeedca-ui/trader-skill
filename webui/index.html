@@ -919,6 +919,11 @@ function renderGoldNews(d){
      'News is balanced: let the price levels and trade grades lead, and do not size up on news alone. ') +
     'News never moves your stop. Headlines that hit price already show up in the move, so avoid chasing a spike; wait for the plan\'s entry. <a href="#' + AS.cmd + '">Open ' + esc(AS.name) + ' assessment</a></div>';
 
+  const mc = g.macro;
+  const evli = L => L.length ? L.map(e => '<li>' + esc(new Date(e.ts * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC · ' + e.name + ' · ' + e.source + ' [' + e.reliability + ']') + '</li>').join('') : '<li>none</li>';
+  const macroBlock = mc && mc.have_events
+    ? '<div class="g-h">Scheduled releases · from your stored calendar</div><div class="gn-top" style="grid-template-columns:1fr 1fr"><div><b>Upcoming high-impact (72 h)</b><ul class="in-list">' + evli(mc.upcoming) + '</ul></div><div><b>Recent (24 h)</b><ul class="in-list">' + evli(mc.recent) + '</ul></div></div><div class="note">' + esc(mc.note) + ' Sources: ' + esc(mc.sources.join(', ')) + '.</div>'
+    : '<div class="note">No scheduled releases are stored. Run <b>Update economic events</b> (official FOMC dates plus derived NFP dates) to see them here.</div>';
   const heads = g.headlines;
   const state = {f: 'all'};
   const draw = () => {
@@ -934,7 +939,7 @@ function renderGoldNews(d){
   };
   $('#result').innerHTML =
     '<div class="sub">checked ' + esc(new Date(g.checked * 1000).toLocaleString()) + ' · delayed prices · headlines from Yahoo Finance and Google News</div>' +
-    '<div class="gn-top">' + gauge + '<div class="gn-tiles">' + tiles + '</div></div>' + confirm + use + drivers + links +
+    '<div class="gn-top">' + gauge + '<div class="gn-tiles">' + tiles + '</div></div>' + confirm + use + macroBlock + drivers + links +
     '<div class="g-h">Headlines ranked by likely impact on ' + esc(AS.short) + '</div><div class="bar">' +
     [['all', 'All'], ['high', 'High impact'], ['bullish', 'Bullish'], ['bearish', 'Bearish'], ['neutral', 'Neutral']].map(f => '<button type="button" class="chip' + (f[0] === 'all' ? ' on' : '') + '" data-gf="' + f[0] + '">' + f[1] + '</button>').join('') +
     '</div><ul class="gn-hl" id="gnl"></ul>' +
