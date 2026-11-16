@@ -226,11 +226,220 @@ class CsvImport(unittest.TestCase):
         self.assertNotIn("spread", extras)
 
 
+def with_env(**env):
+    """Context manager: set or unset environment variables for a test, then restore them."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def cm():
+        saved = {k: os.environ.get(k) for k in env}
+        try:
+            for k, v in env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            yield
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    return cm()
+
+
+class FakeResponse:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class FakeOpener:
+    def __init__(self, bodies=None, error=None):
+        self.bodies, self.error, self.requests = list(bodies or []), error, []
+
+    def open(self, req, timeout=None):
+        self.requests.append(req)
+        if self.error:
+            raise self.error
+        return FakeResponse(self.bodies.pop(0) if self.bodies else b'{"candles": []}')
+
+
+class Dukascopy(unittest.TestCase):
+    H = ts(2024, 1, 8, 10)
+
+    def blob(self, rows):
+        import lzma
+        import struct
+        return lzma.compress(b"".join(struct.pack(">IIIff", ms, ask, bid, 1.0, 2.0) for ms, ask, bid in rows))
+
+    def test_bi5_ticks_decode_to_bid_and_ask(self):
+        ticks = md.parse_bi5(self.blob([(0, 2050130, 2049990), (30000, 2050200, 2050050)]), self.H)
+        self.assertEqual(len(ticks), 2)
+        self.assertAlmostEqual(ticks[0][0], self.H)
+        self.assertAlmostEqual(ticks[1][0], self.H + 30)
+        self.assertAlmostEqual(ticks[0][1], 2049.990)                  # bid
+        self.assertAlmostEqual(ticks[0][2], 2050.130)                  # ask
+
+    def test_empty_file_means_the_market_was_closed(self):
+        self.assertEqual(md.parse_bi5(b"", self.H), [])
+
+    def test_ticks_become_mid_bars_with_measured_spread(self):
+        ticks = [(self.H + 10, 100.0, 100.4), (self.H + 100, 101.0, 101.6), (self.H + 200, 99.0, 99.2), (self.H + 310, 100.0, 100.4)]
+        bars, spread, worst, count = md.ticks_to_bars(ticks, 300)
+        self.assertEqual(len(bars), 2)
+        t0 = self.H // 300 * 300
+        self.assertEqual(bars[0], (t0, 101.3, 99.1, 99.1, 100.2))      # (t, high, low, close, open) of mids
+        self.assertAlmostEqual(spread[t0], (0.4 + 0.6 + 0.2) / 3)
+        self.assertAlmostEqual(worst[t0], 0.6)
+        self.assertEqual(count[t0], 3)
+
+    def test_urls_use_zero_based_months(self):
+        d = md.DukascopyProvider()
+        self.assertTrue(d.url("XAUUSD", self.H).endswith("/XAUUSD/2024/00/08/10h_ticks.bi5"))
+        self.assertTrue(d.url("xauusd", ts(2024, 12, 31, 23)).endswith("/XAUUSD/2024/11/31/23h_ticks.bi5"))
+
+    def test_hours_cover_the_range(self):
+        d = md.DukascopyProvider()
+        hrs = list(d.hours(self.H + 100, self.H + 3 * 3600))
+        self.assertEqual(hrs, [self.H, self.H + 3600, self.H + 7200])
+
+    def test_cached_files_are_used_without_the_network(self):
+        d = md.DukascopyProvider()
+        root = tempfile.mkdtemp()
+        try:
+            path = d.cache_path("XAUUSD", self.H, root)
+            os.makedirs(os.path.dirname(path))
+            with open(path, "wb") as f:
+                f.write(self.blob([(0, 2050130, 2049990)]))
+            ticks = d.fetch_hours("XAUUSD", self.H, self.H + 3600, root=root, opener=FakeOpener(error=AssertionError("network used")))
+            self.assertEqual(len(ticks), 1)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_a_404_is_an_empty_hour_and_is_cached(self):
+        import urllib.error
+        d = md.DukascopyProvider()
+        root = tempfile.mkdtemp()
+        try:
+            err = urllib.error.HTTPError("u", 404, "nf", {}, None)
+            self.assertEqual(d.fetch_hours("XAUUSD", self.H, self.H + 3600, root=root, delay=0, opener=FakeOpener(error=err)), [])
+            self.assertTrue(os.path.exists(d.cache_path("XAUUSD", self.H, root)))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_other_http_errors_are_reported(self):
+        import urllib.error
+        d = md.DukascopyProvider()
+        root = tempfile.mkdtemp()
+        try:
+            err = urllib.error.HTTPError("u", 503, "x", {}, None)
+            with self.assertRaises(md.DataUnavailable):
+                d.fetch_hours("XAUUSD", self.H, self.H + 3600, root=root, delay=0, opener=FakeOpener(error=err))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_a_range_is_required(self):
+        with self.assertRaises(md.DataUnavailable):
+            md.DukascopyProvider().fetch("XAUUSD", "5m")
+
+
+class Oanda(unittest.TestCase):
+    PAYLOAD = {"candles": [
+        {"complete": True, "time": "2024-01-08T10:00:00.000000000Z",
+         "bid": {"o": "2049.9", "h": "2050.9", "l": "2049.1", "c": "2050.5"}, "ask": {"o": "2050.1", "h": "2051.1", "l": "2049.3", "c": "2050.7"}},
+        {"complete": False, "time": "2024-01-08T10:05:00.000000000Z",
+         "bid": {"o": "1", "h": "1", "l": "1", "c": "1"}, "ask": {"o": "1", "h": "1", "l": "1", "c": "1"}}]}
+
+    def test_complete_candles_only_mid_prices_and_spread(self):
+        bars, spread = md.parse_oanda_candles(self.PAYLOAD, "5m")
+        self.assertEqual(len(bars), 1)
+        t = ts(2024, 1, 8, 10)
+        self.assertEqual(bars[0], (t, 2051.0, 2049.2, 2050.6, 2050.0))
+        self.assertAlmostEqual(spread[t], 0.2)
+
+    def test_not_configured_names_the_variable_but_never_a_value(self):
+        with with_env(OANDA_TOKEN=None):
+            with self.assertRaises(md.DataUnavailable) as cm:
+                md.OandaProvider().fetch("XAUUSD", "5m")
+        self.assertIn("OANDA_TOKEN", str(cm.exception))
+
+    def test_the_token_is_sent_but_never_leaks_into_errors(self):
+        import urllib.error
+        with with_env(OANDA_TOKEN="SECRET123", OANDA_ENV="practice"):
+            err = urllib.error.HTTPError("https://x", 401, "Unauthorized", {}, None)
+            op = FakeOpener(error=err)
+            with self.assertRaises(md.DataUnavailable) as cm:
+                md.OandaProvider(op).fetch("XAUUSD", "5m")
+            self.assertIn("401", str(cm.exception))
+            self.assertNotIn("SECRET123", str(cm.exception))
+            self.assertNotIn("SECRET123", repr(cm.exception))
+            self.assertEqual(op.requests[0].get_header("Authorization"), "Bearer SECRET123")
+            self.assertIn("api-fxpractice", op.requests[0].full_url)
+            self.assertIn("XAU_USD", op.requests[0].full_url)
+
+    def test_fetch_reads_candles_and_attaches_spread(self):
+        import json
+        with with_env(OANDA_TOKEN="tok", OANDA_ENV="practice"):
+            op = FakeOpener([json.dumps(self.PAYLOAD).encode()])
+            bars, meta = md.OandaProvider(op).fetch("XAUUSD", "5m")
+        self.assertEqual(len(bars), 1)
+        self.assertTrue(meta["bid_ask"])
+        self.assertIn(bars[0][0], meta["extras"]["spread"])
+
+    def test_only_the_candles_endpoint_is_ever_requested(self):
+        with with_env(OANDA_TOKEN="tok"):
+            op = FakeOpener()
+            md.OandaProvider(op).fetch("XAUUSD", "5m")
+        for r in op.requests:
+            self.assertIn("/v3/instruments/", r.full_url)
+            self.assertIn("/candles", r.full_url)
+            self.assertNotIn("/orders", r.full_url)
+            self.assertEqual(r.get_method(), "GET")
+
+    def test_live_environment_uses_the_live_host(self):
+        with with_env(OANDA_TOKEN="tok", OANDA_ENV="live"):
+            op = FakeOpener()
+            md.OandaProvider(op).fetch("XAUUSD", "5m")
+        self.assertIn("api-fxtrade", op.requests[0].full_url)
+
+    def test_unknown_granularity(self):
+        with with_env(OANDA_TOKEN="tok"):
+            with self.assertRaises(md.DataUnavailable):
+                md.OandaProvider(FakeOpener()).fetch("XAUUSD", "7m")
+
+
+class StoreExtras(unittest.TestCase):
+    def test_spread_is_saved_and_merged(self):
+        d = tempfile.mkdtemp()
+        try:
+            s = md.Store(d)
+            bars = series(MON, 3, 300)
+            s.save("dukascopy", "XAUUSD", "5m", bars, extras={"spread": {bars[0][0]: 0.3, bars[1][0]: 0.4}})
+            s.save("dukascopy", "XAUUSD", "5m", bars, extras={"spread": {bars[2][0]: 0.5}})
+            ex = s.load_extras("dukascopy", "XAUUSD", "5m")
+            self.assertEqual(ex["spread"][bars[2][0]], 0.5)
+            self.assertEqual(ex["spread"][bars[0][0]], 0.3)
+            self.assertEqual(s.load_extras("x", "y", "5m"), {})
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class Providers(unittest.TestCase):
     def test_broker_feeds_do_not_pretend(self):
-        for name in ("mt5", "oanda"):
-            with self.assertRaises(md.DataUnavailable):
-                md.PROVIDERS[name].fetch("XAUUSD", "5m")
+        with with_env(OANDA_TOKEN=None):
+            for name in ("mt5", "oanda"):
+                with self.assertRaises(md.DataUnavailable):
+                    md.PROVIDERS[name].fetch("XAUUSD", "5m")
 
     def test_yahoo_declares_what_it_lacks(self):
         notes = " ".join(md.PROVIDERS["yahoo"].describe("GC=F"))

@@ -23,6 +23,8 @@ import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -235,6 +237,171 @@ class YahooProvider(Provider):
                           currency=meta.get("currency"), exchange=meta.get("exchangeName"))
 
 
+GRANULARITY = {"1m": "M1", "5m": "M5", "15m": "M15", "30m": "M30", "60m": "H1", "1h": "H1", "4h": "H4", "1d": "D"}
+
+
+def parse_oanda_candles(payload, interval):
+    """OANDA v20 candles requested with price=BA. Returns (bars, spread_by_time). Only COMPLETE candles are used.
+    Mid prices are the average of bid and ask; the spread is ask minus bid averaged over open and close."""
+    bars, spread = [], {}
+    for cd in payload.get("candles", []):
+        if not cd.get("complete") or "bid" not in cd or "ask" not in cd:
+            continue
+        t = int(dt.datetime.strptime(cd["time"][:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.timezone.utc).timestamp())
+        b, a = cd["bid"], cd["ask"]
+        mid = {k: (float(b[k]) + float(a[k])) / 2.0 for k in "ohlc"}
+        bars.append((t, mid["h"], mid["l"], mid["c"], mid["o"]))
+        spread[t] = ((float(a["o"]) - float(b["o"])) + (float(a["c"]) - float(b["c"]))) / 2.0
+    return bars, spread
+
+
+class OandaProvider(Provider):
+    """OANDA v20 REST candles with real bid and ask. The token is read from the OANDA_TOKEN environment variable
+    (practice or live per OANDA_ENV, default practice). It is never printed, logged or stored, and error messages
+    contain only the HTTP status. Read-only: candles only, no trading endpoint is ever called."""
+    name = "oanda"
+    bid_ask = True
+    HOSTS = {"practice": "https://api-fxpractice.oanda.com", "live": "https://api-fxtrade.oanda.com"}
+
+    def __init__(self, opener=None):
+        self.opener = opener or urllib.request.build_opener()
+
+    def fetch(self, symbol, interval, rng=None, start=None, end=None, max_requests=40):
+        token = os.environ.get("OANDA_TOKEN", "")
+        if not token:
+            raise DataUnavailable("OANDA is not configured: set the OANDA_TOKEN environment variable "
+                                  "(and OANDA_ENV=practice or live). The token is never shown or stored.")
+        if interval not in GRANULARITY:
+            raise DataUnavailable("OANDA has no %s granularity here" % interval)
+        host = self.HOSTS.get(os.environ.get("OANDA_ENV", "practice"), self.HOSTS["practice"])
+        instrument = symbol.upper().replace("XAUUSD", "XAU_USD").replace("-", "_")
+        bars, spread, cursor = [], {}, start
+        for _ in range(max_requests):
+            q = "granularity=%s&price=BA&count=5000" % GRANULARITY[interval]
+            q += ("&from=%d" % cursor) if cursor else ""
+            req = urllib.request.Request("%s/v3/instruments/%s/candles?%s" % (host, instrument, q),
+                                         headers={"Authorization": "Bearer " + token, "Accept-Datetime-Format": "RFC3339",
+                                                  "User-Agent": "trader-skill-research/1.0"})
+            try:
+                with self.opener.open(req, timeout=30) as r:
+                    payload = json.loads(r.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                raise DataUnavailable("OANDA answered HTTP %d" % e.code)      # never include the request or its headers
+            except (urllib.error.URLError, ValueError, OSError):
+                raise DataUnavailable("could not read OANDA candles")
+            got, sp = parse_oanda_candles(payload, interval)
+            if not got:
+                break
+            bars += got
+            spread.update(sp)
+            if end and got[-1][0] >= end or len(payload.get("candles", [])) < 5000 or not start:
+                break
+            cursor = got[-1][0] + 1
+        bars, _ = dedupe_bars(bars)
+        if end:
+            bars = [b for b in bars if b[0] <= end]
+        return bars, dict(provider=self.name, delayed=False, bid_ask=True, notes=["OANDA mid prices; spread is ask minus bid."],
+                          extras={"spread": {t: v for t, v in spread.items() if t in {b[0] for b in bars}}})
+
+
+def parse_bi5(data, hour_start, point=1000.0):
+    """One Dukascopy hourly tick file. Records are 20 bytes, big endian: milliseconds since the hour, ask, bid
+    (integers in points), ask volume, bid volume. Returns [(t_seconds, bid, ask)] in UTC."""
+    import lzma
+    import struct
+    if not data:
+        return []                                   # market closed: Dukascopy serves an empty file
+    raw = lzma.decompress(data)
+    out = []
+    for ms, ask, bid, _av, _bv in struct.iter_unpack(">IIIff", raw[:len(raw) - len(raw) % 20]):
+        out.append((hour_start + ms / 1000.0, bid / point, ask / point))
+    return out
+
+
+def ticks_to_bars(ticks, step):
+    """Tick (bid/ask) data to mid-price bars. Also returns the mean and worst spread per bar and the tick count, so
+    spread is measured, not assumed."""
+    bars, spread, worst, count = [], {}, {}, {}
+    cur = None
+    for t, bid, ask in ticks:
+        key = int(t // step) * step
+        mid, sp = (bid + ask) / 2.0, ask - bid
+        if cur is None or cur[0] != key:
+            if cur:
+                bars.append(cur[1])
+            cur = [key, [key, mid, mid, mid, mid]]
+            spread[key], worst[key], count[key] = 0.0, sp, 0
+        b = cur[1]
+        b[1], b[2], b[3] = max(b[1], mid), min(b[2], mid), mid
+        spread[key] += sp
+        worst[key] = max(worst[key], sp)
+        count[key] += 1
+    if cur:
+        bars.append(cur[1])
+    out = [(b[0], b[1], b[2], b[3], b[4]) for b in bars]
+    return out, {t: spread[t] / count[t] for t in spread}, worst, count
+
+
+class DukascopyProvider(Provider):
+    """Free historical tick data with real bid and ask, from Dukascopy's public data feed. Downloads are cached on
+    disk as the raw files. NOTHING is fetched unless fetch_hours is called, and the command line requires --yes
+    after printing how many files that means."""
+    name = "dukascopy"
+    bid_ask = True
+    BASE = "https://datafeed.dukascopy.com/datafeed"
+
+    def url(self, symbol, hour_start):
+        d = dt.datetime.fromtimestamp(hour_start, dt.timezone.utc)
+        return "%s/%s/%04d/%02d/%02d/%02dh_ticks.bi5" % (self.BASE, symbol.upper(), d.year, d.month - 1, d.day, d.hour)   # month is 0-based
+
+    def cache_path(self, symbol, hour_start, root=None):
+        d = dt.datetime.fromtimestamp(hour_start, dt.timezone.utc)
+        return os.path.join(root or os.path.join(STORE_DIR, "dukascopy"), symbol.upper(), "%04d" % d.year, "%02d" % d.month, "%02d" % d.day,
+                            "%02dh_ticks.bi5" % d.hour)
+
+    def hours(self, start, end):
+        h = start // 3600 * 3600
+        while h < end:
+            yield h
+            h += 3600
+
+    def fetch_hours(self, symbol, start, end, root=None, delay=0.3, opener=None):
+        opener = opener or urllib.request.build_opener()
+        ticks = []
+        for h in self.hours(start, end):
+            path = self.cache_path(symbol, h, root)
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    data = f.read()
+            else:
+                req = urllib.request.Request(self.url(symbol, h), headers={"User-Agent": "trader-skill-research/1.0"})
+                try:
+                    with opener.open(req, timeout=30) as r:
+                        data = r.read()
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        data = b""
+                    else:
+                        raise DataUnavailable("Dukascopy answered HTTP %d" % e.code)
+                except (urllib.error.URLError, OSError):
+                    raise DataUnavailable("could not reach Dukascopy")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+                time.sleep(delay)
+            ticks += parse_bi5(data, h)
+        return ticks
+
+    def fetch(self, symbol, interval, rng=None, start=None, end=None, **kw):
+        if not (start and end):
+            raise DataUnavailable("Dukascopy needs an explicit start and end (and --yes on the command line)")
+        step = INTERVAL_SEC[interval]
+        ticks = self.fetch_hours(symbol, start, end, **kw)
+        bars, spread, worst, count = ticks_to_bars(ticks, step)
+        return bars, dict(provider=self.name, delayed=False, bid_ask=True, notes=["Dukascopy tick data aggregated to mid-price bars; spread measured from bid and ask."],
+                          extras={"spread": spread, "spread_max": worst, "ticks": count})
+
+
 class UnconfiguredProvider(Provider):
     """Placeholder for a broker feed that needs the user's own terminal or account. It never guesses."""
 
@@ -247,10 +414,9 @@ class UnconfiguredProvider(Provider):
 
 PROVIDERS = {
     "yahoo": YahooProvider(),
-    "mt5": UnconfiguredProvider("MetaTrader 5", "export history to CSV and use the CSV importer, or run the MT5 terminal "
-                                "and a read-only adapter. Credentials are never stored here."),
-    "oanda": UnconfiguredProvider("OANDA", "needs a practice-account token supplied through an environment variable; "
-                                  "not implemented yet."),
+    "oanda": OandaProvider(),
+    "dukascopy": DukascopyProvider(),
+    "mt5": UnconfiguredProvider("MetaTrader 5", "not integrated by request; the generic CSV importer can still read a history export."),
 }
 
 _FORMATS = ("%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S",
@@ -341,8 +507,20 @@ class Store:
         except (OSError, ValueError, KeyError):
             return [], {}, []
 
-    def save(self, provider, symbol, interval, bars, prov=None, now=None):
+    def load_extras(self, provider, symbol, interval):
+        """Per-bar extras saved with the bars, such as the measured spread: {name: {t: value}}."""
+        try:
+            with open(self._path(provider, symbol, interval), encoding="utf-8") as f:
+                raw = json.load(f).get("extras", {})
+            return {k: {int(t): v for t, v in d.items()} for k, d in raw.items()}
+        except (OSError, ValueError):
+            return {}
+
+    def save(self, provider, symbol, interval, bars, prov=None, now=None, extras=None):
         old, _, revs = self.load(provider, symbol, interval)
+        merged_extras = self.load_extras(provider, symbol, interval)
+        for k, d in (extras or {}).items():
+            merged_extras.setdefault(k, {}).update(d)
         merged = {b[0]: b for b in old}
         step = INTERVAL_SEC.get(interval, 0)
         for b in bars:
@@ -360,7 +538,8 @@ class Store:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(dict(meta=meta, bars=[list(b) for b in out], revisions=revs[-200:]), f)
+            json.dump(dict(meta=meta, bars=[list(b) for b in out], revisions=revs[-200:],
+                           extras={k: {str(t): v for t, v in d.items()} for k, d in merged_extras.items()}), f)
         os.replace(tmp, path)
         return meta
 
@@ -419,8 +598,43 @@ def main(argv=None):
     c2.add_argument("--point-size", type=float, default=None)
     c2.add_argument("--calendar", default="cme_gold", choices=CALENDARS)
     c2.add_argument("--json", action="store_true")
+    c3 = sub.add_parser("dukascopy", help="download free tick data (bid and ask) and build bars; needs --yes")
+    c3.add_argument("--symbol", default="XAUUSD")
+    c3.add_argument("--from", dest="start", required=True, help="YYYY-MM-DD (UTC)")
+    c3.add_argument("--to", dest="end", required=True, help="YYYY-MM-DD (UTC, exclusive)")
+    c3.add_argument("--interval", default="5m", choices=["1m", "5m", "15m", "30m", "60m"])
+    c3.add_argument("--yes", action="store_true", help="confirm the download after reading the file count")
+    c4 = sub.add_parser("oanda", help="read candles with bid and ask using OANDA_TOKEN from the environment")
+    c4.add_argument("--symbol", default="XAUUSD")
+    c4.add_argument("--from", dest="start", required=True)
+    c4.add_argument("--to", dest="end", required=True)
+    c4.add_argument("--interval", default="5m", choices=sorted(GRANULARITY))
     a = ap.parse_args(argv)
     try:
+        if a.cmd in ("dukascopy", "oanda"):
+            day = lambda s: int(dt.datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc).timestamp())
+            s, e = day(a.start), day(a.end)
+            if e <= s:
+                raise DataUnavailable("--to must be after --from")
+            prov = PROVIDERS[a.cmd]
+            if a.cmd == "dukascopy":
+                files = list(prov.hours(s, e))
+                cached = sum(1 for h in files if os.path.exists(prov.cache_path(a.symbol, h)))
+                print("%d hourly tick files (%d already cached), roughly %d MB to download from %s" %
+                      (len(files), cached, max(0, len(files) - cached) // 24 * 2, prov.BASE))
+                if not a.yes:
+                    print("Nothing downloaded. Run again with --yes to proceed.")
+                    return 0
+            bars, meta = prov.fetch(a.symbol, a.interval, None, start=s, end=e)
+            bars, removed = dedupe_bars(bars)
+            rep = validate_bars(bars, a.interval, "cme_gold")
+            p = provenance(a.cmd, a.symbol, a.interval, bars, extra=dict(notes=meta["notes"]))
+            Store().save(a.cmd, a.symbol, a.interval, bars, p, extras=meta.get("extras"))
+            _print_report(rep, p)
+            sp = sorted(meta["extras"]["spread"].values()) if meta["extras"].get("spread") else []
+            if sp:
+                print("  measured spread: median %.3f, 95th percentile %.3f, worst bar mean %.3f" % (sp[len(sp) // 2], sp[int(len(sp) * 0.95)], sp[-1]))
+            return 0
         if a.cmd == "check":
             import assets
             bars, meta = PROVIDERS["yahoo"].fetch(a.symbol, a.interval)
