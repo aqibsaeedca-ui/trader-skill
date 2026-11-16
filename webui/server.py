@@ -64,6 +64,12 @@ COMMANDS = [
                  P("window", "Order stays working (bars)", "number", "10", "--window"),
                  P("hold", "Max bars held", "number", "20", "--hold"),
                  P("cost", "Cost ($/oz round trip)", "number", "0.5", "--cost")]),
+    dict(id="data-check", group="Gold", title="Data quality check",
+         help="Fetches one series from Yahoo and reports duplicates, missing bars, bad candles, staleness, whether the "
+              "latest bar is still forming, and a provenance hash. Read-only; nothing is interpolated.",
+         script="webui/marketdata.py", fixed=["check"],
+         params=[P("symbol", "Symbol", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F", "BTC-USD"]),
+                 P("interval", "Interval", "select", "15m", "--interval", choices=["15m", "60m", "1d", "1wk"])]),
     # ---- bitcoin: the same analysis as gold, on BTC-USD (24/7, so no market-hours gaps)
     dict(id="btc", group="Bitcoin", title="Bitcoin assessment",
          help="The same trend, volatility, levels, multi-timeframe confluence and ranked trade plans as the gold page, "

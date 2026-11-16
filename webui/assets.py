@@ -10,7 +10,7 @@ GOLD = dict(
     steps=dict(d=100, w=250, m15=25, h1=50, h4=100),     # round-number spacing, in dollars
     lot=dict(zip(("GC=F", "MGC=F", "XAUUSD=X"), (100, 10, 1))), micro=10, micro_name="micro future (10 oz)",
     one_name="1 oz", etf_name="gold ETF or fractional shares", short_note="Short via spot/CFD only",
-    default_cost=0.5, max_cost=50)
+    default_cost=0.5, max_cost=50, calendar="cme_gold")
 
 BTC = dict(
     id="btc", name="Bitcoin", short="bitcoin", cmd="btc", symbols=("BTC-USD",),
@@ -18,7 +18,7 @@ BTC = dict(
     steps=dict(d=5000, w=10000, m15=500, h1=1000, h4=2500),
     lot={}, micro=0.1, micro_name="micro future (0.1 BTC)",
     one_name="1 BTC", etf_name="spot bitcoin or a bitcoin ETF", short_note="Short via futures, perps or margin only",
-    default_cost=25, max_cost=500)
+    default_cost=25, max_cost=500, calendar="24x7")
 
 PROFILES = (GOLD, BTC)
 
