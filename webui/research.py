@@ -139,8 +139,7 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
         r = bt.walk_forward(bars, name, c, exec_cfg, wf, interval_sec=step, htf_sec=HTF.get(interval), event_times=ev_high,
                             n_trials_extra=total_grid - len(st.param_grid(name)), holdout_store=holdout_store, symbol=symbol, interval=interval)
         chosen = (r["holdout"] or {}).get("params") or (r["folds"][-1].get("chosen") if r["folds"] and r["folds"][-1].get("chosen") else None)
-        stress_rows = bt.stress(bars, name, chosen or {}, c, (0.0, 1.0, 2.0, 3.0), exec_cfg, step, HTF.get(interval), ev_high,
-                                decided_range=(wf["train_min"], r["split"])) if chosen is not None else []
+        stress_rows = r["stress"]                      # out-of-sample only; see backtester.walk_forward
         v = bt.verdict(r, stress_rows)
         oos = r["oos_trades"]
         full = bt.run_strategy(bars, name, chosen or {}, c, exec_cfg, step, HTF.get(interval), ev_high)
@@ -179,6 +178,19 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
     out = _clean(out)
     if out_path != "":
         save_validation(out, out_path)
+    return out
+
+
+def slim(rec, max_points=300):
+    """The same record, light enough for the web page: long equity curves are thinned (the first and last points are
+    kept) and the per-parameter grid table is dropped. The full record stays in trader/validation.json."""
+    out = json.loads(json.dumps(rec))
+    for s in out.get("strategies", {}).values():
+        eq = s.get("equity") or []
+        if len(eq) > max_points:
+            step = (len(eq) - 1) / float(max_points - 1)
+            s["equity"] = [eq[int(round(i * step))] for i in range(max_points)]
+        s.pop("grid_oos", None)
     return out
 
 
@@ -226,7 +238,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     ov = dict(spread=a.spread, slippage=a.slippage, commission_per_unit=a.commission)
     rec = run(a.symbol, a.interval, a.source, a.seed, ov, not a.no_ml, a.quick)
-    print(json.dumps(rec) if a.json else render(rec))
+    print(json.dumps(slim(rec)) if a.json else render(rec))
     return 0
 
 

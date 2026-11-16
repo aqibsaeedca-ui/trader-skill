@@ -51,6 +51,8 @@ class Commands(unittest.TestCase):
         for cid in ("intel", "research", "macro-show", "macro-update", "macro-study"):
             self.assertEqual(by[cid]["group"], "Gold")
         self.assertEqual(by["intel"]["view"], "intel")
+        self.assertEqual(by["research"]["view"], "research")
+        self.assertIn("--json", by["research"]["fixed"])                  # the page needs the structured record
         self.assertEqual(len({c["id"] for c in server.COMMANDS}), len(server.COMMANDS))
 
     def test_default_arguments_build_cleanly(self):

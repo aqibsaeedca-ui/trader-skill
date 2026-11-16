@@ -181,6 +181,30 @@ class Data(unittest.TestCase):
         out = rs._clean({"a": float("nan"), "b": [float("inf"), 1.0], "c": (1, 2)})
         self.assertEqual(out, {"a": None, "b": [None, 1.0], "c": [1, 2]})
 
+    def test_slim_thins_long_curves_and_drops_the_grid_without_touching_the_original(self):
+        eq = [dict(t=i, r=float(i)) for i in range(1000)]
+        rec = dict(strategies={"range": dict(equity=eq, grid_oos=[1, 2, 3], status="x")})
+        out = rs.slim(rec, max_points=100)
+        s = out["strategies"]["range"]
+        self.assertEqual(len(s["equity"]), 100)
+        self.assertEqual((s["equity"][0]["t"], s["equity"][-1]["t"]), (0, 999))        # both ends kept
+        self.assertNotIn("grid_oos", s)
+        self.assertEqual(len(rec["strategies"]["range"]["equity"]), 1000)
+        self.assertIn("grid_oos", rec["strategies"]["range"])
+        short = rs.slim(dict(strategies={"range": dict(equity=eq[:50])}))
+        self.assertEqual(len(short["strategies"]["range"]["equity"]), 50)
+
+    def test_slim_output_of_a_real_run_is_small_and_valid_json(self):
+        d = tempfile.mkdtemp()
+        try:
+            rec = rs.run("GC=F", "60m", quick=True, bars_override=noise(1200, seed=2), events=[], out_path="",
+                         holdout_store=os.path.join(d, "h.json"), model_dir=os.path.join(d, "m"), do_ml=False)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        text = json.dumps(rs.slim(rec), allow_nan=False)
+        self.assertLess(len(text), 150000)
+        self.assertEqual(json.loads(text)["symbol"], "GC=F")
+
     def test_equity_curve(self):
         tr = [dict(r=1.0, exit_t=2), dict(r=-0.5, exit_t=1), dict(r=2.0, exit_t=3)]
         self.assertEqual([p["r"] for p in rs.equity_curve(tr)], [-0.5, 0.5, 2.5])

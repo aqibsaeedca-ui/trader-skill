@@ -61,7 +61,7 @@ COMMANDS = [
     dict(id="research", group="Gold", title="Gold research run",
          help="Walk-forward test of the four strategies with a final untouched holdout, cost stress, news-filter test and a calibrated "
               "model, saved as a reproducible record. Costs are placeholders unless you enter your broker's. Takes about 10 seconds.",
-         script="webui/research.py", fixed=["run"],
+         script="webui/research.py", fixed=["run", "--json"], view="research",
          params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F", "BTC-USD", "XAUUSD"]),
                  P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m", "1d", "5m"]),
                  P("source", "Data", "select", "yahoo", "--source", choices=["yahoo", "dukascopy", "oanda"]),

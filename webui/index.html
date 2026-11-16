@@ -152,6 +152,23 @@ details.raw{margin-top:10px}details.raw summary{cursor:pointer;color:var(--mute)
 .in-list{margin:4px 0 8px 18px;padding:0;font-size:13px}
 .in-bar{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:4px 0}.in-bar i{display:block;height:100%;background:var(--accent)}
 .in-bar.warn i{background:#b54708}.in-bar.bad i{background:#b42318}
+.rs-hero{border:1px solid var(--line);border-left-width:6px;border-radius:12px;padding:14px 18px;margin:6px 0 12px;background:var(--bg)}
+.rs-hero.none{border-left-color:#b54708}.rs-hero.some{border-left-color:#0b6b4f}
+.rs-hero .big{font-size:22px;font-weight:800}.rs-hero.none .big{color:#b54708}.rs-hero.some .big{color:#0b6b4f}
+.rs-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.rs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px;margin-bottom:12px}
+.rs-card{border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--bg)}
+.rs-card h4{margin:0 0 4px;font-size:15px}
+.rs-state{display:inline-block;font-size:12px;font-weight:800;padding:3px 11px;border-radius:99px;margin-bottom:8px}
+.rs-state.wait{background:#fef0c7;color:#7a2e0e}.rs-state.fail{background:#fee4e2;color:#912018}.rs-state.pass{background:#d1fadf;color:#05603a}
+@media (prefers-color-scheme:dark){.rs-state.wait{background:#4e3a08;color:#fedf89}.rs-state.fail{background:#55160c;color:#fda29b}.rs-state.pass{background:#053321;color:#75e0a7}}
+.rs-sample{font-size:12.5px;margin:2px 0 8px}
+.rs-checks{list-style:none;margin:6px 0;padding:0;font-size:12.5px}.rs-checks li{padding:2px 0}
+.rs-checks .ok{color:#0b6b4f}.rs-checks .no{color:#b42318}.rs-checks .na{color:var(--mute)}
+.rs-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
+.rs-stats div{background:var(--panel);border-radius:8px;padding:6px 8px}.rs-stats .k{font-size:10.5px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}.rs-stats .v{font-weight:700;font-size:15px}
+.rs-next{border:1px solid var(--accent);border-radius:12px;padding:12px 16px;margin:12px 0}
+.rs-next ol{margin:6px 0 0 18px;padding:0}
 .dq{font-size:12.5px;color:var(--mute);margin:6px 0 4px}.dq b{color:var(--ink)}
 .note.unval{border-left:4px solid #b54708;padding-left:10px}
 details.more{margin:6px 0}details.more summary{cursor:pointer;color:var(--mute);font-size:13px;padding:4px 0}
@@ -285,6 +302,7 @@ async function run(c){
     $('#cmdline').textContent = '$ ' + d.command;
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
+    if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'intel' && d.code === 0) { try { return renderIntel(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The dashboard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'goldnews' && d.code === 0) { try { return renderGoldNews(d); } catch (e) { console.error(e); } }
     if (d.view === 'backtest' && d.code === 0) { try { return renderBacktest(d); } catch (e) { console.error(e); } }
@@ -655,6 +673,118 @@ function renderNews(d){
     if (m) { const s = document.getElementById(m.dataset.s); const open = s.classList.toggle('open'); m.textContent = open ? 'less' : 'more'; }
   });
   draw();
+}
+
+function renderResearch(d){
+  const g = JSON.parse(d.stdout);
+  const R = (v, dp = 2) => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(dp) + 'R';
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : 'n/a';
+  const li = a => a.map(x => '<li>' + esc(x) + '</li>').join('');
+  const NAME = {breakout_retest: 'Breakout and retest', trend_continuation: 'Trend continuation', liquidity_sweep: 'Liquidity sweep reversal', range: 'Range trading'};
+  const WHAT = {breakout_retest: 'Waits for price to break out of a tight range, then buys or sells the retest of the broken edge.',
+    trend_continuation: 'Buys pullbacks in an up-trend (sells bounces in a down-trend) once the bigger chart agrees.',
+    liquidity_sweep: 'Fades a fake-out: price grabs the stops above or below a level, snaps back, and the structure turns.',
+    range: 'Sells the top and buys the bottom of a sideways range, with a stop outside it.'};
+  const CHECK = {bootstrap_ci_lower_above_zero: 'The result is clearly above zero (95% band)', expectancy_positive: 'The average trade makes money after costs',
+    positive_at_2x_costs: 'It still makes money if costs double', deflated_sharpe_ok: 'It survives the correction for trying many variations',
+    both_halves_positive: 'Both halves of the history agree', holdout_big_enough: 'The final untouched test has enough trades',
+    holdout_positive: 'The final untouched test made money', holdout_looked_at_once: 'The final test was looked at only once'};
+  const NEED = 100;
+  const entries = Object.entries(g.strategies);
+  const passed = entries.filter(([, s]) => s.status.startsWith('VALIDATED')).length;
+  const costWarn = /PLACEHOLDER/.test(g.costs.source);
+  const hero = '<div class="rs-hero ' + (passed ? 'some' : 'none') + '"><div class="big">' +
+    (passed ? passed + ' of ' + entries.length + ' strategies passed the evidence test' : 'No strategy has passed the evidence test yet') + '</div>' +
+    '<div>' + (passed ? 'Passing means the results held up on data the strategy never saw, after costs. It is not a promise about the future.' :
+      'That is a normal result, not a failure of the tool: most ideas do not survive honest testing, and the amount of history so far is small.') + '</div>' +
+    '<div class="rs-meta"><span class="chip">' + esc(g.symbol) + ' · ' + esc(g.interval) + ' chart</span><span class="chip">' + g.data.rows.toLocaleString('en-US') + ' bars</span>' +
+    '<span class="chip">' + esc(when(g.data.first)) + ' → ' + esc(when(g.data.last)) + '</span><span class="chip">data: ' + esc(g.data.source) + ' (' + esc(g.data.quality) + ')</span>' +
+    (costWarn ? '<span class="chip" style="border-color:#b54708;color:#b54708">costs are placeholders</span>' : '<span class="chip">costs: measured</span>') +
+    '<span class="chip">ran ' + esc(when(g.created)) + ' in ' + g.seconds + ' s</span></div></div>';
+  const how = '<div class="note"><b>How to read this.</b> Each strategy is tested by walking forward through history: it picks its settings on older data, then is judged only on the next stretch it has not seen. The last ' +
+    Math.round(g.walk_forward.holdout_frac * 100) + '% of the history is kept completely untouched for one final look. Spread, slippage and commission are charged on every trade. A strategy needs at least ' + NEED +
+    ' test trades and has to pass every check below before it is allowed to say LONG or SHORT on the dashboard.</div>';
+
+  const whisk = (avg, lo, hi) => {
+    const D = 1.2, X = v => (Math.max(-D, Math.min(D, v)) + D) / (2 * D) * 260;
+    const cls = lo == null ? 'unk' : lo > 0 ? 'pos' : hi < 0 ? 'neg' : 'unk';
+    const col = {pos: '#0b6b4f', neg: '#b42318', unk: '#98a2b3'}[cls];
+    const x0 = X(0), x1 = X(avg);
+    return '<svg viewBox="0 0 260 24" width="100%" height="24" preserveAspectRatio="none"><line x1="130" x2="130" y1="0" y2="24" stroke="var(--mute)" stroke-width="1"/>' +
+      '<rect x="' + Math.min(x0, x1).toFixed(1) + '" y="6" width="' + Math.max(2, Math.abs(x1 - x0)).toFixed(1) + '" height="12" rx="2" fill="' + col + '"/>' +
+      (lo != null ? '<line x1="' + X(lo).toFixed(1) + '" x2="' + X(hi).toFixed(1) + '" y1="12" y2="12" stroke="var(--ink)" stroke-width="1.5"/><line x1="' + X(lo).toFixed(1) + '" x2="' + X(lo).toFixed(1) + '" y1="7" y2="17" stroke="var(--ink)"/><line x1="' + X(hi).toFixed(1) + '" x2="' + X(hi).toFixed(1) + '" y1="7" y2="17" stroke="var(--ink)"/>' : '') + '</svg>';
+  };
+  const spark = pts => {
+    if (!pts || pts.length < 2) return '<div class="sub">no trades to draw</div>';
+    const xs = pts.map(p => p.t), ys = pts.map(p => p.r), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys);
+    const X = v => 4 + (v - x0) / ((x1 - x0) || 1) * 252, Y = v => 50 - (v - y0) / ((y1 - y0) || 1) * 44;
+    return '<svg viewBox="0 0 260 56" width="100%" height="56" preserveAspectRatio="none"><line x1="0" x2="260" y1="' + Y(0).toFixed(1) + '" y2="' + Y(0).toFixed(1) + '" stroke="var(--line)"/>' +
+      '<polyline fill="none" stroke="var(--accent)" stroke-width="1.8" points="' + pts.map(p => X(p.t).toFixed(1) + ',' + Y(p.r).toFixed(1)).join(' ') + '"/></svg>';
+  };
+
+  const cards = entries.map(([k, s]) => {
+    const o = s.oos, n = o.n || 0, ho = (s.holdout && s.holdout.summary) || {};
+    const state = s.status.startsWith('VALIDATED') ? ['pass', 'Passed (past data only)'] : s.status === 'INSUFFICIENT SAMPLE' ? ['wait', 'Not enough trades yet'] : ['fail', 'Did not pass'];
+    const pct = Math.min(100, n / NEED * 100);
+    let body = '<h4>' + esc(NAME[k] || k) + '</h4><div class="sub" style="margin-bottom:6px">' + esc(WHAT[k] || '') + '</div><span class="rs-state ' + state[0] + '">' + state[1] + '</span>' +
+      '<div class="rs-sample"><b>' + n + '</b> of ' + NEED + ' test trades needed' + '<div class="in-bar ' + (n >= NEED ? '' : 'warn') + '"><i style="width:' + pct.toFixed(0) + '%"></i></div></div>';
+    if (n) {
+      const lo = o.ci95 && o.ci95[0] != null ? o.ci95[0] : null, hi = o.ci95 && o.ci95[1] != null ? o.ci95[1] : null;
+      body += '<div class="sub">Average result per trade, after costs: <b>' + R(o.expectancy) + '</b>' + (lo != null ? ' (95% band ' + R(lo) + ' to ' + R(hi) + ')' : '') + '. Bar right of the line = made money.</div>' + whisk(o.expectancy, lo, hi) +
+        '<div class="rs-stats"><div><div class="k">Win rate</div><div class="v">' + Math.round(o.win_rate * 100) + '%</div></div><div><div class="k">Profit factor</div><div class="v">' + (o.profit_factor ? o.profit_factor.toFixed(2) : 'n/a') + '</div></div>' +
+        '<div><div class="k">Worst dip</div><div class="v">' + o.max_dd_r.toFixed(1) + 'R</div></div></div>' +
+        '<div class="sub">Running total (R) across the test trades</div>' + spark(s.equity);
+    } else {
+      body += '<div class="sub">The strategy took no trades in the test windows.</div>';
+    }
+    body += '<div class="sub" style="margin-top:6px">Final untouched test: ' + (ho.n ? '<b>' + ho.n + '</b> trades, ' + R(ho.expectancy) : 'no trades') + '</div>';
+    const checks = Object.entries(s.checks || {});
+    body += '<ul class="rs-checks">' + (checks.length ? checks.map(([c, ok]) => '<li class="' + (ok ? 'ok' : 'no') + '">' + (ok ? '✓ ' : '✗ ') + esc(CHECK[c] || c.replace(/_/g, ' ')) + '</li>').join('') :
+      '<li class="na">– The pass/fail checks are not run until there are ' + NEED + ' test trades, because fewer would prove nothing either way.</li>') + '</ul>';
+    if (s.reasons.length && checks.length) body += '<div class="sub"><b>Why it did not pass:</b></div><ul class="in-list">' + li(s.reasons) + '</ul>';
+    const st = (s.stress || []).filter(r => r.expectancy != null);
+    if (st.length) body += '<div class="sub">The same test trades if spread and slippage were 0×, 1×, 2×, 3× as big (1× is the average above): ' + st.map(r => r.multiple + '× → ' + R(r.expectancy)).join(' · ') + '</div>';
+    const rg = Object.entries(s.by_regime || {}).filter(([, v]) => v.n >= 1), se = Object.entries(s.by_session || {}).filter(([, v]) => v.n >= 1), sd = Object.entries(s.by_side || {}).filter(([, v]) => v.n >= 1);
+    if (rg.length || se.length) body += '<details class="raw"><summary>Where it did better or worse</summary><table class="in-t"><tr><th>Group</th><th>Trades</th><th>Average</th></tr>' +
+      sd.map(([a, v]) => '<tr><td>' + esc(a) + ' trades</td><td>' + v.n + '</td><td>' + R(v.expectancy) + '</td></tr>').join('') +
+      se.map(([a, v]) => '<tr><td>' + esc(a) + ' session</td><td>' + v.n + '</td><td>' + R(v.expectancy) + '</td></tr>').join('') +
+      rg.map(([a, v]) => '<tr><td>' + esc(a.replace(/_/g, ' ')) + ' market</td><td>' + v.n + '</td><td>' + R(v.expectancy) + '</td></tr>').join('') + '</table><div class="sub">Slices of a small sample are noisy. Treat them as hints, not findings.</div></details>';
+    if (s.news_filter && s.news_filter.verdict) body += '<div class="sub" style="margin-top:6px"><b>Would skipping news help?</b> ' + esc(s.news_filter.verdict) + '</div>';
+    const rej = Object.entries(s.rejections || {});
+    if (rej.length) body += '<details class="raw"><summary>' + (s.signals_total || 0) + ' ideas appeared, ' + (s.trades_total || 0) + ' became trades. Why the others were skipped</summary><ul class="in-list">' + rej.map(([w, c]) => '<li>' + esc(w.replace(/#/g, '…')) + ' (' + c + ')</li>').join('') + '</ul></details>';
+    return '<div class="rs-card">' + body + '</div>';
+  }).join('');
+
+  let mlHtml = '';
+  if (g.ml) {
+    const m = g.ml, acc = m.decision.status.startsWith('ACCEPTED'), best = m.metrics[m.decision.model] || Object.values(m.metrics)[0];
+    mlHtml = '<div class="rs-card"><h4>Prediction model (does a computer find an edge?)</h4><div class="sub" style="margin-bottom:6px">A small statistical model tries to predict whether a trade reaches its target before its stop. It is trained on the oldest 60% of the history, tuned on the next 20%, and graded on the newest 20%.</div>' +
+      '<span class="rs-state ' + (acc ? 'pass' : 'fail') + '">' + (acc ? 'Accepted (past data only)' : 'Rejected: no real skill found') + '</span>' +
+      (m.decision.reasons.length ? '<ul class="in-list">' + li(m.decision.reasons) + '</ul>' : '') +
+      (best ? '<table class="in-t"><tr><th>Check</th><th>Result</th><th>What good looks like</th></tr>' +
+        '<tr><td>Ranking skill (AUC)</td><td>' + (best.auc != null ? best.auc.toFixed(2) : 'n/a') + (best.auc_ci && best.auc_ci[0] != null ? ' (band ' + best.auc_ci[0].toFixed(2) + ' to ' + best.auc_ci[1].toFixed(2) + ')' : '') + '</td><td>0.50 is a coin flip; the whole band should be above it</td></tr>' +
+        '<tr><td>Better than guessing the average</td><td>' + (best.log_loss_gain >= 0 ? '+' : '−') + Math.abs(best.log_loss_gain).toFixed(4) + '</td><td>at least +0.0020</td></tr>' +
+        '<tr><td>Honest probabilities</td><td>error ' + best.ece.toFixed(3) + '</td><td>0.08 or lower</td></tr>' +
+        '<tr><td>Trades it would pick</td><td>' + best.selected.n + (best.selected.expectancy != null ? ' · ' + R(best.selected.expectancy) : '') + '</td><td>positive, and better than taking every trade (' + (m.baselines && m.baselines.take_all.expectancy != null ? R(m.baselines.take_all.expectancy) : 'n/a') + ')</td></tr></table>' : '') +
+      '<div class="sub">' + m.counts.train + ' rows to learn from, ' + m.counts.val + ' to tune on, ' + m.counts.test + ' to grade on. A rejected model is saved for the record but never used to show a probability.</div></div>';
+  }
+  const dataCard = '<div class="rs-card"><h4>What this run used</h4><ul class="in-list"><li>Data: ' + esc(g.data.source) + ', ' + g.data.rows.toLocaleString('en-US') + ' closed bars from ' + esc(when(g.data.first)) + ' to ' + esc(when(g.data.last)) +
+    '. Quality check: <b>' + esc(g.data.quality) + '</b>' + (g.data.issues && g.data.issues.length ? ' (' + esc(g.data.issues.slice(0, 2).join('; ')) + ')' : '') + '.</li>' +
+    '<li>Costs charged on every trade: spread ' + g.costs.spread.toFixed(2) + ', slippage ' + g.costs.slippage.toFixed(2) + ' per side. <b>' + esc(g.costs.source) + '</b>.</li>' +
+    '<li>Economic events known: ' + g.events.count + ' (' + g.events.high + ' high-impact). Strategies stand aside right after major releases.</li>' +
+    '<li>Reproducible: every number comes from fixed settings and a data fingerprint (' + esc(g.data.sha256.slice(0, 12)) + ') saved with the run, code version ' + esc(g.code_version) + '.</li></ul></div>';
+
+  const need = [];
+  const short = entries.filter(([, s]) => s.status === 'INSUFFICIENT SAMPLE');
+  if (short.length) need.push('<b>More history is needed.</b> ' + short.length + ' of ' + entries.length + ' strategies have too few test trades to judge. Yahoo only offers about 30 days of 15-minute and 6 months of 1-hour data. Every run adds to the saved history, or you can download free five-minute tick data (Data: dukascopy in the form above) for far more trades.');
+  if (costWarn) need.push('<b>Enter your broker\'s real costs.</b> The spread and slippage above are placeholders. Type your broker\'s numbers into the form above and run again, because costs decide whether a small edge survives.');
+  if (!passed) need.push('<b>Until a strategy passes, the Gold intelligence page will say NO TRADE.</b> That is the safe default, not a fault.');
+  else need.push('<b>Open Gold intelligence</b> to see whether a passed strategy has a confirmed signal right now, and check it against your risk limits.');
+  const next = '<div class="rs-next"><b>What to do next</b><ol>' + need.map(t => '<li>' + t + '</li>').join('') + '</ol></div>';
+
+  $('#result').innerHTML = hero + how + '<div class="in-sec">The four strategies</div><div class="rs-grid">' + cards + '</div>' +
+    (mlHtml ? '<div class="in-sec">Prediction model</div><div class="rs-grid">' + mlHtml + dataCard + '</div>' : '<div class="rs-grid">' + dataCard + '</div>') + next +
+    '<div class="note">' + esc(g.note) + ' Not financial advice.</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 80000)) + '</pre></details>';
 }
 
 function renderIntel(d){
