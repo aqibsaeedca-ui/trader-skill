@@ -417,6 +417,16 @@ class WalkForward(unittest.TestCase):
         self.assertEqual(r["grid_size"], len(st.param_grid("range")))
         self.assertEqual(r["n_trials"], r["grid_size"])
 
+    def test_cost_stress_is_out_of_sample_and_consistent_with_the_headline(self):
+        bars, r = self.run_wf(store=self.store)
+        by = {row["multiple"]: row for row in r["stress"]}
+        self.assertEqual(set(by), {0.0, 1.0, 2.0, 3.0})
+        self.assertEqual(by[1.0]["n"], r["oos"].get("n", 0))                       # 1x is exactly the headline sample
+        if r["oos"].get("n"):
+            self.assertAlmostEqual(by[1.0]["expectancy"], r["oos"]["expectancy"])
+            ex = [by[m]["expectancy"] for m in (0.0, 1.0, 2.0, 3.0)]
+            self.assertEqual(ex, sorted(ex, reverse=True))                          # more cost never helps
+
     def test_too_little_data_gives_no_folds(self):
         bars = noise(300, seed=2)
         r = bt.walk_forward(bars, "range", bt.costs(), dict(max_hold=20), self.WF, holdout_store=self.store)

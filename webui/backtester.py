@@ -402,7 +402,7 @@ def walk_forward(bars, name, c, exec_cfg=None, wf=None, interval_sec=None, htf_s
     for s, g in zip(insts, grid):
         tr, _ = execute(bars, sigs[id(s)], c, exec_cfg)
         per.append(dict(params=g, trades=tr))
-    folds, oos, chosen = [], [], []
+    folds, oos, chosen, fold_choice = [], [], [], []
     start = wf["train_min"]
     while start < split:
         end = min(start + wf["test_len"], split)
@@ -417,6 +417,7 @@ def walk_forward(bars, name, c, exec_cfg=None, wf=None, interval_sec=None, htf_s
             folds.append(dict(start=start, end=end, chosen=None, n_test=0, note="no parameter set had enough training trades"))
         else:
             chosen.append(best)
+            fold_choice.append((start, end, best))
             oos.extend(test_all[best])
             tsum = summary(test_all[best])
             folds.append(dict(start=start, end=end, chosen=per[best]["params"], train_score=best_score, n_test=tsum["n"],
@@ -440,10 +441,21 @@ def walk_forward(bars, name, c, exec_cfg=None, wf=None, interval_sec=None, htf_s
         attempts = holdout_register(key, per[fk]["params"], holdout_store)
         ho = [t for t in per[fk]["trades"] if t["decided_i"] >= split]
         holdout = dict(params=per[fk]["params"], attempts=attempts, start_t=bars[split][0], summary=summary(ho))
+    # cost stress on the OUT-OF-SAMPLE trades only: the same signals, the same per-fold choices, costs scaled up or down.
+    # (Re-running the finally chosen settings over the whole span would be in-sample and flatter the result.)
+    stress_rows = []
+    for m in (0.0, 1.0, 2.0, 3.0):
+        cm, cache, tr = scaled(c, m), {}, []
+        for a, b, k in fold_choice:
+            if k not in cache:
+                cache[k] = execute(bars, sigs[id(insts[k])], cm, exec_cfg)[0]
+            tr += [t for t in cache[k] if a <= t["decided_i"] < b]
+        sm = summary(tr)
+        stress_rows.append(dict(multiple=m, n=sm["n"], expectancy=sm.get("expectancy"), profit_factor=sm.get("profit_factor"), ci95=sm.get("ci95")))
     n_trials = len(grid) + n_trials_extra
     rs = [t["r"] for t in oos]
     halves = [summary(oos[:len(oos) // 2]).get("expectancy"), summary(oos[len(oos) // 2:]).get("expectancy")] if len(oos) >= 20 else [None, None]
-    return dict(strategy=name, folds=folds, oos_trades=oos, oos=summary(oos), holdout=holdout, stability=stab, halves=halves,
+    return dict(strategy=name, folds=folds, oos_trades=oos, oos=summary(oos), holdout=holdout, stability=stab, halves=halves, stress=stress_rows,
                 bootstrap=block_bootstrap(rs, GATE_DEFAULTS["bootstrap"], wf["seed"]), dsr=deflated_sharpe(rs, n_trials),
                 n_trials=n_trials, grid_size=len(grid), embargo=embargo, split=split, wf=wf, analysis=A,
                 all_param_summaries=[dict(params=d["params"], n=len(d["trades"]), expectancy=summary(d["trades"]).get("expectancy")) for d in per])
