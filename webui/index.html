@@ -131,6 +131,8 @@ details.raw{margin-top:10px}details.raw summary{cursor:pointer;color:var(--mute)
 .gn-hl a.t,.gn-hl .t{color:var(--ink);font-weight:600;text-decoration:none}.gn-hl a.t:hover{text-decoration:underline}
 .gn-dir{font-size:11px;font-weight:800;padding:2px 8px;border-radius:5px;color:#fff}.gn-dir.bullish{background:#0b6b4f}.gn-dir.bearish{background:#b42318}.gn-dir.neutral{background:#667085}
 .gn-use{border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin:12px 0;background:var(--bg)}
+.dq{font-size:12.5px;color:var(--mute);margin:6px 0 4px}.dq b{color:var(--ink)}
+.note.unval{border-left:4px solid #b54708;padding-left:10px}
 details.more{margin:6px 0}details.more summary{cursor:pointer;color:var(--mute);font-size:13px;padding:4px 0}
 .tfs{display:flex;gap:3px;flex-wrap:wrap}
 .tfc{font-size:10.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--line);color:var(--mute)}
@@ -399,6 +401,8 @@ function renderGold(d){
     if (!s) return '<div class="note">' + esc(g.long_error || 'Not loaded.') + '</div>';
     const top = s.plans.slice(0, 3), rest = s.plans.slice(3);
     return '<div class="g-h">Top ' + top.length + ' trades · ' + TFNAME[k] + ' chart · ranked by zone strength, timeframe agreement, trend, reward and distance</div>' +
+      '<div class="note unval"><b>UNVALIDATED.</b> The grade is a hand-weighted score, not a probability. Reward figures are before spread, slippage and commission. ' +
+      'Only the daily setups have a historical test; these plans have none.</div>' +
       (top.length ? top.map(x => plan(x, s, k)).join('') : '<div class="note">No zone close enough to build a trade.</div>') +
       (rest.length ? '<details class="more"><summary>' + rest.length + ' more trade idea' + (rest.length > 1 ? 's' : '') + ' on this chart</summary>' + rest.map(x => plan(x, s, k)).join('') + '</details>' : '') +
       '<div class="g-h">Price ladder · more dots = more signals agree</div>' + ladder(s);
@@ -413,6 +417,23 @@ function renderGold(d){
 
   const first = TABS[0][0];
   const ALLTF = ['15m', '1h', '4h', '1d', '1w'];
+  function dqPanel(){
+    const q = g.data_quality;
+    if (!q) return '';
+    if (q.error) return '<div class="note">Data check unavailable: ' + esc(q.error) + '</div>';
+    const cls = {ok: 'g-up', warn: 'g-flat', fail: 'g-down'}[q.status] || 'g-flat';
+    const age = s => s == null ? 'n/a' : s < 3600 ? Math.round(s / 60) + ' min' : s < 172800 ? (s / 3600).toFixed(1) + ' h' : Math.round(s / 86400) + ' d';
+    const when = t => t ? t.replace('T', ' ').slice(0, 16) + ' UTC' : 'n/a';
+    const lead = q.series.find(x => x.label === '15m') || q.series[0];
+    const strip = '<div class="dq"><b>Data:</b> ' + esc(q.provider) + ' · no bid/ask, no spread · latest ' + esc(lead.label) + ' bar ' + esc(when(lead.last)) +
+      ' (' + age(lead.age_sec) + ' old' + (lead.market_open === false ? ', market closed' : '') + ') · <span class="' + cls + '">data checks ' + esc(q.status.toUpperCase()) + '</span></div>';
+    const rows = q.series.map(r => '<tr><td><b>' + esc(r.label) + '</b></td><td>' + r.bars + '</td><td>' + esc(when(r.last)) + '</td><td>' + age(r.age_sec) + '</td><td>' +
+      (r.completeness_pct == null ? 'n/a' : r.completeness_pct + '%') + '</td><td class="' + ({ok: 'g-up', warn: 'g-flat', fail: 'g-down'}[r.status] || '') + '">' + esc(r.status) + '</td><td class="sub">' +
+      (r.issues.length ? esc(r.issues.join('; ')) : 'no issues') + ' · sha ' + esc(r.sha256) + '</td></tr>').join('');
+    return strip + '<details class="raw"><summary>Data quality details</summary><div class="note">' + q.notes.map(n => esc(n)).join('<br>') + '</div>' +
+      '<table class="snap"><tr><th>Series</th><th>Bars</th><th>Latest bar</th><th>Age</th><th>Complete</th><th>Status</th><th>Notes</th></tr>' + rows + '</table>' +
+      '<div class="note">Missing bars are reported, never filled in. Gaps on a futures chart can be exchange holidays or shortened sessions.</div></details>';
+  }
   function confPanel(){
     const cs = g.confluence;
     if (!cs) return g.intraday_error ? '<div class="note">' + esc(g.intraday_error) + '</div>' : '';
@@ -428,6 +449,7 @@ function renderGold(d){
   $('#result').innerHTML =
     '<div class="g-tiles">' + tiles + '</div>' +
     '<div class="g-bottom"><h4>Bottom line</h4><ul>' + bl.map(x => '<li>' + x + '</li>').join('') + '</ul></div>' +
+    dqPanel() +
     confPanel() +
     (TABS.length > 1 ? '<div class="g-tabs">' + TABS.map((t, i) => '<button type="button" data-t="' + t[0] + '"' + (i === 0 ? ' class="on"' : '') + '>' + t[1] + '</button>').join('') + '</div>' : '') +
     '<div id="gsec">' + sectionHtml(first) + '</div>' +

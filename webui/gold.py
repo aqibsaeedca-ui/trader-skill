@@ -598,9 +598,32 @@ def build_json(symbol, bars, a, meta, args):
             out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, pf["steps"]["w"]), args, symbol, "weekly")
         except SystemExit as e:
             out["long_error"] = str(e)
+    out["data_quality"] = data_quality(symbol, bars, wants(args, "long"))
     extra_txt = zones_report(symbol, bars, a, args) if args.horizon != "none" else None
     out["report"] = report(symbol, a, meta, args, extra_txt)
     return out
+
+
+def data_quality(symbol, daily, with_weekly):
+    """Provider, timestamps and quality checks for the series behind this page. Advisory only: a failure
+    here must never stop the assessment, so any problem is reported instead of raised."""
+    try:
+        import marketdata
+        series = []
+        res = _INTRA.get(symbol)
+        if res:
+            series += [("15m", res["bars"]["15m"], "15m"), ("1h", res["bars"]["1h"], "60m")]
+        series.append(("daily", daily, "1d"))
+        if with_weekly and symbol in _WEEKLY:
+            series.append(("weekly", _WEEKLY[symbol], "1wk"))
+        q = marketdata.quality_report(symbol, series)
+        q["notes"] = q["notes"] + [
+            "4h bars are built from the 1h series in fixed UTC blocks.",
+            "Levels and trade plans are computed on the newest bar even while it is still forming, so they can "
+            "shift until that bar closes."]
+        return q
+    except Exception as e:                      # advisory; never break the page
+        return dict(error=str(e)[:200])
 
 
 def zones_report(symbol, daily, a, args):

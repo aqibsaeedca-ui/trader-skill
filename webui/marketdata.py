@@ -128,6 +128,8 @@ def validate_bars(bars, interval, calendar="cme_gold", now=None, max_listed_gaps
     for a, b in zip(ordered, ordered[1:]):
         g = b - a
         if g < step:
+            if step >= 86400 and g >= step - 7200:
+                continue                              # daylight saving moves daily/weekly stamps by an hour
             if b == ordered[-1]:
                 rep["last_bar_off_grid"] = True       # Yahoo stamps the live bar with the quote time
             else:

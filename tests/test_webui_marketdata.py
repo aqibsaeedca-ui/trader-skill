@@ -107,6 +107,19 @@ class Validate(unittest.TestCase):
         self.assertEqual(r["holiday_candidates"], 1)
         self.assertEqual(r["unexpected_missing"], 0)
 
+    def test_daylight_saving_shift_is_not_an_overlap(self):
+        d0 = ts(2024, 3, 8, 5)
+        bars = [(d0, 11, 9, 10, 10), (d0 + 86400 - 3600, 11, 9, 10, 10)]      # next stamp is an hour earlier
+        r = md.validate_bars(bars, "1d", "cme_gold", now=d0 + 2 * 86400)
+        self.assertEqual(r["overlaps"], 0)
+        weekly = [(d0, 11, 9, 10, 10), (d0 + 604800 - 3600, 11, 9, 10, 10)]
+        self.assertEqual(md.validate_bars(weekly, "1wk", "cme_gold", now=d0 + 700000)["overlaps"], 0)
+
+    def test_real_overlap_on_daily_is_still_flagged(self):
+        d0 = ts(2024, 3, 8, 5)
+        bars = [(d0, 11, 9, 10, 10), (d0 + 40000, 11, 9, 10, 10), (d0 + 40000 + 86400, 11, 9, 10, 10)]
+        self.assertEqual(md.validate_bars(bars, "1d", "cme_gold", now=d0 + 3 * 86400)["overlaps"], 1)
+
     def test_empty_series_fails(self):
         self.assertEqual(md.validate_bars([], "15m")["status"], "fail")
 

@@ -256,6 +256,35 @@ class Profiles(unittest.TestCase):
         self.assertAlmostEqual(b["micro_risk"], 0.1 * 2000)
 
 
+class DataQualityPanel(unittest.TestCase):
+    def test_report_structure_and_honest_notes(self):
+        daily = walk(60)
+        saved = dict(gold._INTRA)
+        gold._INTRA["TEST=F"] = {"bars": {"15m": walk(30), "1h": walk(30)}}
+        try:
+            q = gold.data_quality("GC=F", daily, False)
+        finally:
+            gold._INTRA.clear()
+            gold._INTRA.update(saved)
+        self.assertEqual([s["label"] for s in q["series"]], ["daily"])
+        self.assertFalse(q["bid_ask"])
+        self.assertFalse(q["spread_available"])
+        self.assertIn("still forming", " ".join(q["notes"]))
+        self.assertIn("not spot XAUUSD", " ".join(q["notes"]))
+
+    def test_intraday_series_are_included_when_available(self):
+        gold._INTRA["GC=F"] = {"bars": {"15m": walk(30), "1h": walk(30)}}
+        try:
+            q = gold.data_quality("GC=F", walk(60), False)
+        finally:
+            gold._INTRA.pop("GC=F", None)
+        self.assertEqual([s["label"] for s in q["series"]], ["15m", "1h", "daily"])
+
+    def test_a_failure_is_reported_not_raised(self):
+        q = gold.data_quality("GC=F", None, False)
+        self.assertIn("error", q)
+
+
 class BitcoinRegression(unittest.TestCase):
     def test_commands_exist_for_both_assets(self):
         ids = {c["id"] for c in server.COMMANDS}
