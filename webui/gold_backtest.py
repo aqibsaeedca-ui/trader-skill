@@ -132,6 +132,34 @@ def row(label, rs):
         "inf" if s["pf"] == float("inf") else "%.2f" % s["pf"], s["streak"])
 
 
+COST_MULTIPLES = (0.0, 0.5, 1.0, 2.0, 4.0)
+
+
+def cost_sensitivity(trades, base_cost):
+    """Re-prices every trade at other round-trip costs. A trade's R is (gross move - cost) / risk, so only the
+    cost term changes: R(c) = r1 + (base_cost - c) / risk. Also returns the break-even cost: the round-trip
+    cost per unit at which the average R is exactly zero (zero or negative means no edge even for free)."""
+    pool = [x for x in trades if x.get("r1") is not None and x.get("risk")]
+    if not pool:
+        return None
+    rows = []
+    seen = set()
+    for m in COST_MULTIPLES:
+        c = round(base_cost * m, 6)
+        if c in seen:
+            continue
+        seen.add(c)
+        rs = [x["r1"] + (base_cost - c) / x["risk"] for x in pool]
+        s = stats(rs)
+        rows.append(dict(cost=c, multiple=m, n=s["n"], avg=s["avg"],
+                         ci=None if s["se"] != s["se"] else 1.96 * s["se"],
+                         pf=None if s["pf"] == float("inf") else s["pf"], win=s["win"]))
+    gross = sum(x["r1"] + base_cost / x["risk"] for x in pool) / len(pool)
+    inv = sum(1.0 / x["risk"] for x in pool) / len(pool)
+    return dict(base=base_cost, rows=rows, gross_avg=gross, breakeven=gross / inv if inv else None,
+                typical_risk=1.0 / inv if inv else None)          # harmonic mean of the price risk per unit
+
+
 HEAD = "  %-34s %5s  %6s  %7s  %6s  %5s  %3s" % ("", "trades", "win", "avg R", "95%", "PF", "run")
 
 
@@ -223,6 +251,16 @@ def main(argv=None):
     add(row("baseline short", base["short"]))
     add("  A strategy only earns trust if it beats this noise by more than its 95% band.")
     add("")
+    cs = cost_sensitivity(trades, args.cost)
+    if cs:
+        add("WHAT COSTS DO (exit at first target; the same trades re-priced at other round-trip costs per %s)" % pf["unit"])
+        add("  %-14s %7s  %7s  %6s" % ("cost", "avg R", "95%", "PF"))
+        for r in cs["rows"]:
+            add("  $%-13.2f %+6.2fR  +/-%.2f  %6s" % (r["cost"], r["avg"], r["ci"] or 0, "inf" if r["pf"] is None else "%.2f" % r["pf"]))
+        be = cs["breakeven"]
+        add("  Average before any cost: %+.2fR. Break-even cost: %s." % (
+            cs["gross_avg"], "none (it loses even with free trading)" if be is None or be <= 0 else "$%.2f per %s" % (be, pf["unit"])))
+        add("")
     add("Backtests overstate what you can capture: delayed Yahoo bars, no slippage beyond the flat cost, no margin")
     add("or contract-roll effects, and the rules were looked at on this same history. Past results do not predict")
     add("future ones. This is not financial advice.")
@@ -276,6 +314,7 @@ def main(argv=None):
                 dict(label="Second half", span="%s to %s" % (day(trades[len(trades) // 2]["t"]) if trades else "", lastd),
                      stats=js([x["r1"] for x in trades if x["i"] >= mid]))],
         baseline=dict(long=js(base["long"]), short=js(base["short"])),
+        cost_sens=cs,
         curve=curve, hist=hist, report="\n".join(L))
     print(json.dumps(data, allow_nan=False))
     return 0

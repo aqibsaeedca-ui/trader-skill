@@ -544,6 +544,15 @@ function renderBacktest(d){
   const grpRows = b.groups.map(g => ({label: g.label, stats: g.stats}));
   const halfRows = b.halves.map(h => ({label: h.label, sub: h.span, stats: h.stats}));
   const fmtp = t => t[0].toUpperCase() + t.slice(1);
+  let costBlock = '';
+  if (b.cost_sens) {
+    const cs = b.cost_sens, be = cs.breakeven;
+    const crow = cs.rows.map(r => ({label: '$' + r.cost.toFixed(2) + ' per ' + PFB.unit, sub: r.multiple === 1 ? 'the cost used above' : r.multiple === 0 ? 'free trading' : r.multiple + '× that',
+      stats: {avg: r.avg, ci: r.ci == null ? 0 : r.ci, win: r.win, n: r.n}}));
+    costBlock = '<div class="bt-h">8 · What costs do to it</div><p class="bt-sub">The same trades re-priced at other round-trip costs (spread, slippage and commission together). ' +
+      'Average before any cost: <b>' + R(cs.gross_avg) + '</b>. ' +
+      (be == null || be <= 0 ? '<b>It loses even with free trading.</b>' : 'Break-even cost: <b>$' + be.toFixed(2) + ' per ' + esc(PFB.unit) + '</b>; real costs above that turn the average negative.') + '</p>' + rbars(crow);
+  }
 
   $('#result').innerHTML =
     '<div class="bt-verdict ' + kind + '"><div class="big">' + head + '</div><div>' + why + '</div><ul>' + v.map(x => '<li>' + x + '</li>').join('') + '</ul></div>' +
@@ -554,7 +563,7 @@ function renderBacktest(d){
     '<div class="bt-h">4 · What separates good trades from bad</div>' + rbars(grpRows) +
     '<div class="bt-h">5 · Does it hold up over time?</div><p class="bt-sub">The same rules, first half of history versus second half.</p>' + rbars(halfRows) +
     '<div class="bt-h">6 · Does it beat doing nothing clever?</div><p class="bt-sub">Entering every time with no zones, same exits and costs. A strategy must beat this by more than its whisker.</p>' + rbars(baseRows) +
-    '<div class="bt-h">7 · How trades ended</div><p class="bt-sub">Most trades end at the stop (−1R); winners are fewer but larger. ' + b.hist.reduce((a, x) => a + x.n, 0) + ' trades.</p>' + histo() +
+    '<div class="bt-h">7 · How trades ended</div><p class="bt-sub">Most trades end at the stop (−1R); winners are fewer but larger. ' + b.hist.reduce((a, x) => a + x.n, 0) + ' trades.</p>' + histo() + costBlock +
     '<div class="note">Rules: ' + m.window + '-bar working orders, trades held at most ' + m.hold + ' bars, stop checked before target on the same bar, gaps through a stop exit at the open, $' + m.cost.toFixed(2) + '/' + PFB.unit + ' cost. ' +
     'Delayed Yahoo daily bars; the rules were developed looking at this same history. Past results do not predict future ones. Not financial advice.</div>' +
     '<details class="raw"><summary>Full text report</summary><pre>' + esc(b.report) + '</pre></details>';
