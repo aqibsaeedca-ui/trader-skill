@@ -131,6 +131,27 @@ details.raw{margin-top:10px}details.raw summary{cursor:pointer;color:var(--mute)
 .gn-hl a.t,.gn-hl .t{color:var(--ink);font-weight:600;text-decoration:none}.gn-hl a.t:hover{text-decoration:underline}
 .gn-dir{font-size:11px;font-weight:800;padding:2px 8px;border-radius:5px;color:#fff}.gn-dir.bullish{background:#0b6b4f}.gn-dir.bearish{background:#b42318}.gn-dir.neutral{background:#667085}
 .gn-use{border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin:12px 0;background:var(--bg)}
+.in-banner{border:1px solid var(--line);border-left-width:6px;border-radius:12px;padding:14px 18px;margin:8px 0 12px;background:var(--bg)}
+.in-banner.NO{border-left-color:#b54708}.in-banner.LONG{border-left-color:#0b6b4f}.in-banner.SHORT{border-left-color:#b42318}
+.in-banner .big{font-size:30px;font-weight:800;letter-spacing:.02em}.in-banner.NO .big{color:#b54708}.in-banner.LONG .big{color:#0b6b4f}.in-banner.SHORT .big{color:#b42318}
+.in-banner ul{margin:6px 0 0 18px;padding:0;font-size:13.5px}
+.in-sec{margin:24px 0 8px;font-size:15px;font-weight:800;padding-bottom:4px;border-bottom:2px solid var(--line)}
+.in-sub{font-size:12.5px;color:var(--mute);margin:2px 0 8px}
+.in-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin-bottom:8px}
+.in-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--bg);margin-bottom:10px}
+.in-card h4{margin:0 0 6px;font-size:14px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.in-kv{display:grid;grid-template-columns:150px 1fr;gap:3px 12px;font-size:13px}.in-kv .k{color:var(--mute)}
+.in-t{width:100%;border-collapse:collapse;font-size:12.5px;margin:4px 0 8px}.in-t th{font-size:11px;color:var(--mute);text-transform:uppercase;text-align:left;padding:4px 8px;letter-spacing:.04em}
+.in-t td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
+.in-pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px;border:1px solid var(--line)}
+.in-pill.good{background:#0b6b4f;border-color:#0b6b4f;color:#fff}.in-pill.bad{background:#b42318;border-color:#b42318;color:#fff}.in-pill.warn{border-color:#b54708;color:#b54708}
+.in-form{display:flex;flex-wrap:wrap;gap:6px;align-items:flex-end;margin:6px 0}
+.in-form label{font-size:11px;color:var(--mute);display:flex;flex-direction:column;gap:2px}
+.in-form input,.in-form select{padding:5px 7px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit;width:96px}
+.in-form input.wide{width:180px}
+.in-list{margin:4px 0 8px 18px;padding:0;font-size:13px}
+.in-bar{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:4px 0}.in-bar i{display:block;height:100%;background:var(--accent)}
+.in-bar.warn i{background:#b54708}.in-bar.bad i{background:#b42318}
 .dq{font-size:12.5px;color:var(--mute);margin:6px 0 4px}.dq b{color:var(--ink)}
 .note.unval{border-left:4px solid #b54708;padding-left:10px}
 details.more{margin:6px 0}details.more summary{cursor:pointer;color:var(--mute);font-size:13px;padding:4px 0}
@@ -264,6 +285,7 @@ async function run(c){
     $('#cmdline').textContent = '$ ' + d.command;
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
+    if (d.view === 'intel' && d.code === 0) { try { return renderIntel(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The dashboard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'goldnews' && d.code === 0) { try { return renderGoldNews(d); } catch (e) { console.error(e); } }
     if (d.view === 'backtest' && d.code === 0) { try { return renderBacktest(d); } catch (e) { console.error(e); } }
     $('#result').innerHTML =
@@ -633,6 +655,207 @@ function renderNews(d){
     if (m) { const s = document.getElementById(m.dataset.s); const open = s.classList.toggle('open'); m.textContent = open ? 'less' : 'more'; }
   });
   draw();
+}
+
+function renderIntel(d){
+  const g = JSON.parse(d.stdout), o = g.overview, perf = g.performance, mon = g.risk_monitor;
+  const N = (v, dp) => v == null ? 'n/a' : Number(v).toLocaleString('en-US', {minimumFractionDigits: dp == null ? 2 : dp, maximumFractionDigits: dp == null ? 2 : dp});
+  const RR = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const when = t => t ? t.replace('T', ' ').slice(0, 16) + ' UTC' : 'n/a';
+  const li = a => a.map(x => '<li>' + esc(x) + '</li>').join('');
+  const tile = (k, v, s) => '<div class="g-tile"><div class="k">' + esc(k) + '</div><div class="v" style="font-size:18px">' + v + '</div><div class="s">' + s + '</div></div>';
+  const pill = (t, c) => '<span class="in-pill ' + (c || '') + '">' + esc(t) + '</span>';
+  const act = g.decision.action, bcls = act === 'NO TRADE' ? 'NO' : act;
+  const banner = '<div class="in-banner ' + bcls + '"><div class="big">' + esc(act) + (g.decision.strategy ? ' · ' + esc(g.decision.strategy) : '') + '</div>' +
+    '<div class="in-sub">' + esc(g.symbol) + ' · ' + esc(g.interval) + ' chart · checked ' + esc(when(g.checked)) + ' · live data, no simulated values anywhere on this page</div><ul>' + li(g.decision.reasons) + '</ul></div>';
+
+  // ---------- market overview
+  const al = o.alignment, q = o.data_quality, lead = q.series[0];
+  const tfchips = Object.entries(al.by_tf).map(([k, v]) => '<span class="chip">' + esc(k) + ' ' + esc(String(v).replace('_', ' ')) + '</span>').join(' ');
+  const age = s => s == null ? 'n/a' : s < 3600 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h';
+  const tiles = '<div class="g-tiles">' +
+    tile('Price', N(o.price), 'quote ' + esc(when(o.quote_time)) + ' · ' + age(lead.age_sec) + ' old') +
+    tile('Bid / ask / spread', o.bid != null ? N(o.bid) + ' / ' + N(o.ask) : 'n/a', esc(o.bid_ask_note) + (o.spread != null ? ' · spread ' + N(o.spread) : '')) +
+    tile('Regime', esc(String(o.regime).replace('_', ' ')), 'trend ' + esc(String(o.trend).replace('_', ' ')) + ' · volatility ' + esc(o.volatility)) +
+    tile('Higher-timeframe alignment', esc(al.label), tfchips) +
+    tile('Structure bias', esc(o.bias), 'session ' + esc(o.session) + ' · ADX ' + N(o.adx, 0) + ' · ATR ' + N(o.atr)) +
+    tile('Data', esc(q.provider), 'checks ' + esc(q.status.toUpperCase()) + ' · last closed bar ' + esc(when(o.last_closed_bar)) + (o.forming_bar_excluded ? ' · forming bar excluded' : '')) + '</div>';
+  const lv = (L, t) => L.length ? L.map(x => '<tr><td>' + N(x.price) + '</td><td>' + esc(x.source) + '</td><td>' + N(x.dist_atr, 1) + ' ATR</td></tr>').join('') : '<tr><td colspan="3">none</td></tr>';
+  const levels = '<div class="in-grid"><div><table class="in-t"><tr><th>Resistance</th><th>Source</th><th>Away</th></tr>' + lv(o.levels.resistance) + '</table></div>' +
+    '<div><table class="in-t"><tr><th>Support</th><th>Source</th><th>Away</th></tr>' + lv(o.levels.support) + '</table></div></div>';
+  const S = o.structure, ev1 = e => e ? e.type.toUpperCase() + ' ' + e.dir + ' at ' + N(e.level) + ', ' + e.bars_ago + ' bars ago' : 'none yet';
+  const structure = '<ul class="in-list"><li>Bias <b>' + esc(S.bias) + '</b>; last swing high ' + N(S.swing_high) + ', swing low ' + N(S.swing_low) + '</li>' +
+    '<li>Last break of structure: ' + esc(ev1(S.last_bos)) + '</li><li>Last change of character: ' + esc(ev1(S.last_choch)) + '</li>' +
+    '<li>Confirmed liquidity sweeps: ' + (S.sweeps.length ? S.sweeps.map(s => esc(s.source + ' ' + N(s.level) + ' (' + s.reversal + ' reversal, ' + s.bars_ago + ' bars ago' + (s.major ? ', major' : '') + ')')).join('; ') : 'none') + '</li>' +
+    '<li>Open fair-value gaps nearby: ' + (S.fvg.length ? S.fvg.map(f => esc(f.dir + ' ' + N(f.lo) + '–' + N(f.hi))).join('; ') : 'none') + '</li>' +
+    '<li>Order-block candidates nearby: ' + (S.order_blocks.length ? S.order_blocks.map(f => esc(f.dir + ' ' + N(f.lo) + '–' + N(f.hi))).join('; ') : 'none') + '</li></ul>';
+  const evs = o.events, evl = L => L.length ? L.map(e => '<li>' + esc(when(e.utc) + ' · ' + e.name + ' · ' + e.source + ' [' + e.reliability + ']') + '</li>').join('') : '<li>none</li>';
+  const events = '<div class="in-sub">Calendar: ' + evs.have + ' events stored (run <b>Update economic events</b> to refresh). Derived and manual dates should be checked.</div>' +
+    '<div class="in-grid"><div><b>Upcoming high-impact (72 h)</b><ul class="in-list">' + evl(evs.upcoming) + '</ul></div><div><b>Recent (24 h)</b><ul class="in-list">' + evl(evs.recent) + '</ul></div></div>';
+  const dqrows = q.series.map(r => esc(r.interval) + ': ' + esc(r.status) + (r.issues.length ? ' (' + esc(r.issues.join('; ')) + ')' : '')).join(' · ');
+
+  // ---------- quantitative trade assessment
+  const cands = [];
+  const assess = g.assessments.map(a => {
+    const e = a.evidence, c = a.candidate;
+    let body = '<div class="in-kv"><div class="k">Out-of-sample trades</div><div>' + e.oos_n + (e.oos_n ? ' · expectancy ' + RR(e.oos_expectancy) + (e.oos_ci && e.oos_ci[0] != null ? ' (95% band ' + RR(e.oos_ci[0]) + ' to ' + RR(e.oos_ci[1]) + ')' : '') : '') + '</div>' +
+      '<div class="k">Untouched holdout</div><div>' + e.holdout_n + ' trades' + (e.holdout_n ? ' · ' + RR(e.holdout_expectancy) : '') + '</div>' +
+      '<div class="k">Validated</div><div>' + esc(e.validated_on ? e.validated_on.replace('T', ' ').slice(0, 16) + ' UTC' : 'never') + '</div></div>';
+    if (c) {
+      const i = cands.push({a, c}) - 1;
+      const p = c.probability;
+      body += '<table class="in-t" style="margin-top:8px"><tr><th>' + (a.decision === 'NO TRADE' ? 'Unvalidated candidate (research only)' : 'Plan') + '</th><th></th></tr>' +
+        '<tr><td>Direction</td><td><b>' + esc(c.side.toUpperCase()) + '</b> · ' + esc(c.kind) + ' entry on the next bar</td></tr>' +
+        '<tr><td>Confirmed trigger</td><td>' + esc(c.note) + '</td></tr>' +
+        '<tr><td>Entry (reference)</td><td>' + N(c.entry) + '</td></tr>' +
+        '<tr><td>Stop loss</td><td>' + N(c.stop) + ' (risk ' + N(c.risk_per_unit) + ' per unit)</td></tr>' +
+        '<tr><td>Targets</td><td>' + c.targets.map((t, k) => 'T' + (k + 1) + ' ' + N(t)).join(' · ') + '</td></tr>' +
+        '<tr><td>Structural invalidation</td><td>' + esc(c.invalidation) + '</td></tr>' +
+        '<tr><td>Reward to risk (T1)</td><td>' + N(c.rr_gross) + ' before costs → <b>' + N(c.rr_net) + '</b> after costs (' + N(c.cost_per_unit) + ' per unit)</td></tr>' +
+        '<tr><td>Estimated probability</td><td>' + (p ? '<b>' + Math.round(p.p * 100) + '%</b> target before stop; calibration range ' + (p.interval[0] != null ? Math.round(p.interval[0] * 100) + '–' + Math.round(p.interval[1] * 100) + '%' : 'n/a') + ' from ' + p.bin_n + ' past cases (model ' + esc(p.model_id) + ')' : 'none: ' + esc((a.info.find(x => x.startsWith('no calibrated')) || 'no accepted model').replace('no calibrated probability: ', ''))) + '</td></tr>' +
+        '<tr><td>Expected net return</td><td>' + (c.expected_r != null ? RR(c.expected_r) + ' per trade (from out-of-sample history)' : 'n/a: only shown for validated strategies') + '</td></tr>' +
+        '<tr><td>Historical sample</td><td>' + e.oos_n + ' out-of-sample trades</td></tr>' +
+        '<tr><td>Out-of-sample status</td><td>' + esc(e.status) + '</td></tr>' +
+        (c.sizing ? '<tr><td>Size at your risk</td><td>' + (c.sizing.fits ? N(c.sizing.lots, 4) + ' lots · risk at stop ' + usd2(c.sizing.risk_at_stop) : 'does not fit: the smallest lot risks ' + N(c.sizing.risk_at_min_lot_pct, 1) + '% of your account') + '</td></tr>' : '') +
+        '</table><button type="button" class="chip" data-act="journal" data-i="' + i + '">Add to journal</button> <span class="sub" id="jmsg' + i + '"></span>';
+    } else {
+      body += '<p class="in-sub" style="margin-top:8px">No confirmed trigger on the last closed bar.' + (a.recent.length ? ' Recently triggered (already past): ' + a.recent.map(r => esc(r.side + ' ' + r.bars_ago + ' bars ago')).join(', ') + '.' : '') + '</p>';
+    }
+    if (a.blocking.length) body += '<div class="in-sub" style="margin-top:6px"><b>Why NO TRADE:</b></div><ul class="in-list">' + li(a.blocking) + '</ul>';
+    if (a.info.length) body += '<ul class="in-list sub" style="color:var(--mute)">' + li(a.info) + '</ul>';
+    return '<div class="in-card"><h4>' + esc(a.title) + ' ' + pill(e.status, e.validated ? 'good' : 'warn') + ' ' + pill(a.decision, a.decision === 'NO TRADE' ? 'warn' : a.decision === 'LONG' ? 'good' : 'bad') + '</h4>' + body + '</div>';
+  }).join('');
+
+  // ---------- portfolio risk monitor
+  const sc = mon.status === 'OK' ? 'good' : mon.status === 'WARN' ? 'warn' : 'bad';
+  const barPct = (a, b) => b > 0 ? Math.max(0, Math.min(100, a / b * 100)) : 0;
+  const monTiles = '<div class="g-tiles">' +
+    tile('Account equity', usd2(mon.equity), esc(mon.currency) + ' · you entered this') +
+    tile('Open P/L', usd2(mon.exposure.open_pnl), N(mon.open_pnl_pct, 2) + '% of equity') +
+    tile('Net exposure', N(mon.exposure.net_units, 2) + ' units', 'long ' + N(mon.exposure.long_units, 2) + ' · short ' + N(mon.exposure.short_units, 2) + ' · notional ' + usd(mon.exposure.net_notional)) +
+    tile('Open risk vs budget', usd2(mon.open_risk) + ' / ' + usd2(mon.risk_budget), '<div class="in-bar ' + (mon.risk_remaining < 0 ? 'bad' : barPct(mon.open_risk, mon.risk_budget) > 75 ? 'warn' : '') + '"><i style="width:' + barPct(mon.open_risk, mon.risk_budget).toFixed(0) + '%"></i></div>remaining ' + usd2(mon.risk_remaining)) +
+    tile('Day P/L vs loss limit', usd2(mon.daily_pnl) + ' / −' + usd2(mon.daily_loss_limit), '<div class="in-bar ' + (mon.lockout ? 'bad' : barPct(-mon.daily_pnl, mon.daily_loss_limit) > 60 ? 'warn' : '') + '"><i style="width:' + barPct(-mon.daily_pnl, mon.daily_loss_limit).toFixed(0) + '%"></i></div>' + (mon.lockout ? 'LOCKED OUT for today' : 'room left')) +
+    tile('Status', pill(mon.status, sc), mon.alerts.length + ' alert(s)') + '</div>';
+  const legs = mon.positions.length ? '<table class="in-t"><tr><th>Position</th><th>Units</th><th>Entry</th><th>Stop</th><th>Target</th><th>Open P/L</th><th>To stop</th></tr>' +
+    mon.positions.map(p => '<tr><td>' + esc(p.id + ' ' + p.side) + '</td><td>' + N(p.units, 2) + '</td><td>' + N(p.entry) + '</td><td>' + (p.stop != null ? N(p.stop) : '<b>none</b>') + '</td><td>' + (p.target != null ? N(p.target) : '–') + '</td><td>' + usd2(p.open_pnl) + '</td><td>' + (p.to_stop_atr != null ? N(p.to_stop_atr, 1) + ' ATR' : 'n/a') + '</td></tr>').join('') + '</table>' : '<div class="in-sub">No open positions entered.</div>';
+  const scen = mon.scenarios.length ? '<table class="in-t"><tr><th>What if (read-only)</th><th>P/L</th></tr>' + mon.scenarios.map(s => '<tr><td>' + esc(s.label) + (s.note ? ' <span class="sub">(' + esc(s.note) + ')</span>' : '') + '</td><td>' + usd2(s.pnl) + '</td></tr>').join('') + '</table>' : '';
+  const risk = monTiles + (mon.alerts.length ? '<ul class="in-list">' + li(mon.alerts) + '</ul>' : '') + legs + scen +
+    '<details class="raw"><summary>Edit the positions, pending orders and limits this monitor uses</summary><div class="in-sub">Typed in by you; stored only in trader/portfolio.json. Nothing is sent to a broker. Run the page again to refresh the numbers.</div><div id="pfedit">loading…</div></details>';
+
+  // ---------- performance
+  let perfHtml;
+  if (!perf.available) {
+    perfHtml = '<div class="note">' + esc(perf.message) + ' Nothing is shown here until a real run exists; no sample numbers are ever drawn.</div>';
+  } else {
+    const spark = pts => {
+      if (!pts || pts.length < 2) return '<span class="sub">no trades</span>';
+      const xs = pts.map(p => p.t), ys = pts.map(p => p.r), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys);
+      const X = v => 4 + (v - x0) / ((x1 - x0) || 1) * 212, Y = v => 46 - (v - y0) / ((y1 - y0) || 1) * 40;
+      return '<svg viewBox="0 0 220 50" width="220" height="50"><line x1="0" x2="220" y1="' + Y(0).toFixed(1) + '" y2="' + Y(0).toFixed(1) + '" stroke="var(--line)"/><polyline fill="none" stroke="var(--accent)" stroke-width="1.6" points="' + pts.map(p => X(p.t).toFixed(1) + ',' + Y(p.r).toFixed(1)).join(' ') + '"/></svg>';
+    };
+    const rows = Object.entries(perf.strategies).map(([k, s]) => {
+      const o2 = s.oos, ho = s.holdout || {};
+      return '<tr><td><b>' + esc(k.replace(/_/g, ' ')) + '</b><br>' + pill(s.status, s.status.startsWith('VALIDATED') ? 'good' : 'warn') + '</td><td>' + (o2.n || 0) + '</td><td>' + (o2.n ? RR(o2.expectancy) + '<br><span class="sub">' + (o2.ci95 && o2.ci95[0] != null ? RR(o2.ci95[0]) + ' to ' + RR(o2.ci95[1]) : 'band n/a') + '</span>' : 'n/a') + '</td><td>' +
+        (o2.n && o2.profit_factor ? N(o2.profit_factor) : 'n/a') + '</td><td>' + (o2.n ? N(o2.max_dd_r, 1) + 'R' : 'n/a') + '</td><td>' + (ho.n ? ho.n + ' · ' + RR(ho.expectancy) : '0') + '</td><td>' + spark(s.equity) + '</td></tr>';
+    }).join('');
+    const stress = Object.entries(perf.strategies).map(([k, s]) => '<tr><td>' + esc(k.replace(/_/g, ' ')) + '</td>' + (s.stress.length ? s.stress.map(r => '<td>' + (r.expectancy != null ? RR(r.expectancy) : 'n/a') + '</td>').join('') : '<td colspan="4">n/a</td>') + '</tr>').join('');
+    const regime = Object.entries(perf.strategies).flatMap(([k, s]) => Object.entries(s.by_regime).map(([r, v]) => '<tr><td>' + esc(k.replace(/_/g, ' ')) + '</td><td>' + esc(r.replace(/_/g, ' ')) + '</td><td>' + v.n + '</td><td>' + (v.profit_factor ? N(v.profit_factor) : 'n/a') + '</td><td>' + RR(v.expectancy) + '</td></tr>')).join('');
+    const rej = Object.entries(perf.strategies).flatMap(([k, s]) => Object.entries(s.rejections || {}).map(([why, n]) => '<tr><td>' + esc(k.replace(/_/g, ' ')) + '</td><td>' + esc(why.replace(/#/g, '…')) + '</td><td>' + n + '</td></tr>')).join('');
+    const ml = perf.ml, bins = ml && ml.bins ? ml.bins.filter(b => b.n) : [];
+    const calib = ml ? '<div class="in-sub">Model: <b>' + esc(ml.decision.status) + '</b>' + (ml.decision.reasons.length ? ' · ' + esc(ml.decision.reasons.slice(0, 3).join('; ')) : '') + '</div>' +
+      (bins.length ? '<table class="in-t"><tr><th>Predicted</th><th>Cases</th><th>Actually happened</th><th>Range</th></tr>' + bins.map(b => '<tr><td>' + Math.round(b.mean_p * 100) + '%</td><td>' + b.n + '</td><td>' + Math.round(b.freq * 100) + '%</td><td>' + Math.round(b.ci[0] * 100) + '–' + Math.round(b.ci[1] * 100) + '%</td></tr>').join('') + '</table><div class="in-sub">Calibration table from the validation block. A rejected model is never used for live probabilities.</div>' : '') : '';
+    const cost = perf.costs, sp = g.spread_analysis;
+    const avgc = Object.values(perf.strategies).map(s => s.oos.avg_cost_r).filter(v => v != null);
+    perfHtml = '<div class="in-sub">Research run ' + esc(perf.created.replace('T', ' ').slice(0, 16)) + ' UTC · ' + esc(perf.data.source) + ' data, ' + perf.data.rows + ' bars to ' + esc(when(perf.data.last)) + ' · quality ' + esc(perf.data.quality) +
+      ' · code ' + esc(perf.code_version) + ' · out-of-sample = walk-forward test windows only; the last ' + Math.round(perf.walk_forward.holdout_frac * 100) + '% of bars is an untouched holdout.</div>' +
+      '<table class="in-t"><tr><th>Strategy</th><th>OOS trades</th><th>Expectancy (net)</th><th>Profit factor</th><th>Max drawdown</th><th>Holdout</th><th>Walk-forward equity (R)</th></tr>' + rows + '</table>' +
+      '<div class="in-sec" style="font-size:13px">Cost stress: net expectancy when spread and slippage are 0×, 1×, 2×, 3×</div><table class="in-t"><tr><th>Strategy</th><th>0×</th><th>1×</th><th>2×</th><th>3×</th></tr>' + stress + '</table>' +
+      '<div class="in-sec" style="font-size:13px">Profit factor by market regime (out-of-sample trades)</div>' + (regime ? '<table class="in-t"><tr><th>Strategy</th><th>Regime</th><th>Trades</th><th>PF</th><th>Expectancy</th></tr>' + regime + '</table>' : '<div class="in-sub">No out-of-sample trades to split.</div>') +
+      '<div class="in-sec" style="font-size:13px">Spread and slippage</div><div class="in-sub">Assumed in the tests: spread ' + N(cost.spread) + ', slippage ' + N(cost.slippage) + ' per side (' + esc(cost.source) + '). ' + (avgc.length ? 'Average cost per trade ' + N(avgc.reduce((a, b) => a + b, 0) / avgc.length, 2) + 'R. ' : '') + esc(sp.note) + (sp.available ? ' Median ' + N(sp.median) + ', 95th percentile ' + N(sp.p95) + ', worst ' + N(sp.worst) + '.' : '') + '</div>' +
+      '<div class="in-sec" style="font-size:13px">Model calibration and uncertainty</div>' + calib +
+      '<div class="in-sec" style="font-size:13px">Why signals were rejected</div>' + (rej ? '<table class="in-t"><tr><th>Strategy</th><th>Reason</th><th>Times</th></tr>' + rej + '</table>' : '<div class="in-sub">None recorded.</div>');
+  }
+
+  $('#result').innerHTML = banner +
+    '<div class="in-sec">1 · Market overview</div>' + tiles + '<div class="dq">Data checks: ' + dqrows + '</div>' + levels + structure + events +
+    '<div class="in-sec">2 · Quantitative trade assessment</div><div class="in-sub">Every strategy must pass out-of-sample validation on the code now running before it can say LONG or SHORT. Probabilities and expected returns appear only when a validated strategy or an accepted calibrated model produced them.</div>' + assess +
+    '<div class="in-sec">3 · Portfolio risk monitor</div>' + risk +
+    '<div class="in-sec">4 · Performance evidence</div>' + perfHtml +
+    '<div class="in-sec">5 · Trading journal</div><div id="jrnl">loading…</div>' +
+    '<div class="note">' + g.notes.map(esc).join(' ') + ' Not financial advice.</div>' +
+    '<details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
+
+  // ---------- interactive parts (all local, nothing reaches a broker)
+  const post = async (url, body) => {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'error');
+    return j;
+  };
+  let ps = null;
+  const num = id => { const v = parseFloat($('#' + id).value); return isNaN(v) ? null : v; };
+  const drawPf = () => {
+    const row = (kind, p, i) => '<tr><td>' + esc(p.id + ' ' + p.symbol + ' ' + p.side) + '</td><td>' + p.units + '</td><td>' + (p.entry != null ? p.entry : p.price) + (p.kind ? ' (' + esc(p.kind) + ')' : '') + '</td><td>' + (p.stop != null ? p.stop : '–') + '</td><td>' + (p.target != null ? p.target : '–') + '</td><td><button type="button" class="chip" data-act="rm" data-kind="' + kind + '" data-i="' + i + '">remove</button></td></tr>';
+    $('#pfedit').innerHTML =
+      '<div class="in-form"><label>Equity<input id="pf_eq" value="' + ps.equity + '"></label><label>Realised today<input id="pf_rt" value="' + ps.realised_today + '"></label>' +
+      '<label>Max open risk %<input id="pf_mr" value="' + ps.limits.max_open_risk_pct + '"></label><label>Daily loss limit %<input id="pf_dl" value="' + ps.limits.daily_loss_limit_pct + '"></label>' +
+      '<label>Max positions<input id="pf_mp" value="' + ps.limits.max_positions + '"></label><label>Max net units<input id="pf_mn" value="' + (ps.limits.max_net_units == null ? '' : ps.limits.max_net_units) + '"></label></div>' +
+      '<table class="in-t"><tr><th>Open positions</th><th>Units</th><th>Entry</th><th>Stop</th><th>Target</th><th></th></tr>' + ps.positions.map((p, i) => row('positions', p, i)).join('') + '</table>' +
+      '<div class="in-form"><label>Symbol<select id="np_sym"><option>GC=F</option><option>MGC=F</option><option>BTC-USD</option></select></label><label>Side<select id="np_side"><option>long</option><option>short</option></select></label>' +
+      '<label>Units<input id="np_u"></label><label>Entry<input id="np_e"></label><label>Stop<input id="np_s"></label><label>Target<input id="np_t"></label><button type="button" class="chip" data-act="addpos">Add position</button></div>' +
+      '<table class="in-t"><tr><th>Pending orders</th><th>Units</th><th>Price</th><th>Stop</th><th>Target</th><th></th></tr>' + ps.pending.map((p, i) => row('pending', p, i)).join('') + '</table>' +
+      '<div class="in-form"><label>Symbol<select id="nd_sym"><option>GC=F</option><option>MGC=F</option><option>BTC-USD</option></select></label><label>Side<select id="nd_side"><option>long</option><option>short</option></select></label>' +
+      '<label>Type<select id="nd_kind"><option>limit</option><option>stop</option><option>stop_limit</option></select></label><label>Units<input id="nd_u"></label><label>Price<input id="nd_p"></label><label>Stop<input id="nd_s"></label><button type="button" class="chip" data-act="addpend">Add pending order</button></div>' +
+      '<div class="in-form"><button type="button" class="run" data-act="pfsave">Save</button> <span class="sub" id="pfmsg"></span></div>';
+  };
+  const readTop = () => {
+    ps.equity = num('pf_eq'); ps.realised_today = num('pf_rt') || 0;
+    ps.limits = {max_open_risk_pct: num('pf_mr'), daily_loss_limit_pct: num('pf_dl'), max_positions: num('pf_mp'), max_net_units: num('pf_mn')};
+  };
+  fetch('/api/portfolio').then(r => r.json()).then(s => { ps = s; drawPf(); }).catch(() => { $('#pfedit').textContent = 'Could not load the saved positions.'; });
+  const drawJ = async () => {
+    try {
+      const j = await (await fetch('/api/journal')).json(), s = j.summary;
+      const open = j.entries.filter(e => e.decision === 'TRADE' && !e.fill), live = j.entries.filter(e => e.fill && !e.close);
+      $('#jrnl').innerHTML = '<div class="g-tiles">' + tile('Signals', s.signals, s.taken + ' taken · ' + s.refused + ' refused') + tile('Closed trades', s.closed, s.open + ' open') +
+        tile('Mean slippage', s.mean_slippage_in_r == null ? 'n/a' : RR(s.mean_slippage_in_r), 'in units of planned risk') + tile('Planned vs realised risk', s.mean_risk_ratio == null ? 'n/a' : N(s.mean_risk_ratio, 2) + '×', 'realised ÷ planned') +
+        tile('Mean result', s.mean_r == null ? 'n/a' : RR(s.mean_r), 'on realised risk') + '</div>' +
+        (s.recurring.length ? '<div class="in-sub"><b>Recurring execution errors:</b> ' + esc(s.recurring.map(r => r.tag + ' ×' + r.count).join(', ')) + '</div>' : '<div class="in-sub">No recurring execution errors yet.</div>') +
+        (j.entries.length ? '<table class="in-t"><tr><th>Signal ID</th><th>Decision</th><th>Strategy</th><th>Planned (entry / stop)</th><th>Versions</th><th>Status</th></tr>' + j.entries.slice(0, 12).map(e => '<tr><td style="word-break:break-all">' + esc(e.id) + '</td><td>' + pill(e.decision, e.decision === 'TRADE' ? 'good' : 'warn') + '</td><td>' + esc(e.strategy) + ' ' + esc(e.side) + '</td><td>' + N(e.planned.entry) + ' / ' + N(e.planned.stop) + '</td><td class="sub">code ' + esc(e.versions.code || '') + '<br>' + esc(e.versions.strategy_status || '') + (e.versions.model ? '<br>model ' + esc(e.versions.model) : '') + '</td><td>' + (e.close ? 'closed ' + RR(e.close.r_vs_realised_risk) + (e.tags.length ? ' · ' + esc(e.tags.join(', ')) : '') : e.fill ? 'open, filled at ' + N(e.fill.price) : e.decision === 'TRADE' ? 'waiting for fill' : 'refused: ' + esc((e.reasons[0] || '').slice(0, 70))) + '</td></tr>').join('') + '</table>' : '<div class="in-sub">The journal is empty. Use “Add to journal” on a plan above; refused plans are recorded too.</div>') +
+        (open.length ? '<div class="in-form"><label>Record a fill<select id="jf_id">' + open.map(e => '<option value="' + esc(e.id) + '">' + esc(e.id.slice(0, 44)) + '</option>').join('') + '</select></label><label>Price<input id="jf_p"></label><label>Units<input id="jf_u"></label><button type="button" class="chip" data-act="jfill">Save fill</button></div>' : '') +
+        (live.length ? '<div class="in-form"><label>Close a trade<select id="jc_id">' + live.map(e => '<option value="' + esc(e.id) + '">' + esc(e.id.slice(0, 44)) + '</option>').join('') + '</select></label><label>Exit price<input id="jc_p"></label><label>Tags<input id="jc_t" class="wide" placeholder="e.g. early exit, patient"></label><label>Notes<input id="jc_n" class="wide"></label><label>Stop moved?<select id="jc_m"><option value="">no</option><option value="1">yes</option></select></label><button type="button" class="chip" data-act="jclose">Close and analyse</button></div>' : '') +
+        '<div class="in-sub" id="jmsg">Planned risk is what the plan said; realised risk is measured from the real fill to the planned stop. Entered by you; nothing is read from a broker.</div>';
+    } catch (e) { $('#jrnl').textContent = 'Could not load the journal.'; }
+  };
+  drawJ();
+  $('#result').onclick = async e => {
+    const b = e.target.closest('button[data-act]');
+    if (!b) return;
+    const a = b.dataset.act, msg = t => { const m = $('#jmsg'); if (m) m.textContent = t; };
+    try {
+      if (a === 'journal') {
+        const {a: as, c} = cands[+b.dataset.i], trade = as.decision !== 'NO TRADE';
+        await post('/api/journal', {action: 'add_signal', symbol: g.symbol, interval: g.interval, decision: trade ? 'TRADE' : 'NO TRADE',
+          reasons: trade ? ['all gates passed'] : as.blocking, signal: {id: c.id, strategy: as.strategy, side: c.side, decided_t: Math.round(Date.parse(o.last_closed_bar) / 1000), price: c.entry, stop: c.stop, targets: c.targets, note: c.note, invalidation: c.invalidation, regime: c.regime}});
+        const m = $('#jmsg' + b.dataset.i); if (m) m.textContent = 'recorded'; drawJ();
+      } else if (a === 'rm') { readTop(); ps[b.dataset.kind].splice(+b.dataset.i, 1); drawPf();
+      } else if (a === 'addpos') {
+        readTop(); ps.positions.push({id: 'p' + (ps.positions.length + 1), symbol: $('#np_sym').value, side: $('#np_side').value, units: num('np_u'), entry: num('np_e'), stop: num('np_s'), target: num('np_t')}); drawPf();
+      } else if (a === 'addpend') {
+        readTop(); ps.pending.push({id: 'o' + (ps.pending.length + 1), symbol: $('#nd_sym').value, side: $('#nd_side').value, kind: $('#nd_kind').value, units: num('nd_u'), price: num('nd_p'), stop: num('nd_s')}); drawPf();
+      } else if (a === 'pfsave') {
+        readTop(); ps = await post('/api/portfolio', {state: ps}); drawPf(); $('#pfmsg').textContent = 'saved. Run the page again to refresh the monitor.';
+      } else if (a === 'jfill') {
+        await post('/api/journal', {action: 'fill', id: $('#jf_id').value, price: num('jf_p'), units: num('jf_u')}); drawJ();
+      } else if (a === 'jclose') {
+        await post('/api/journal', {action: 'close', id: $('#jc_id').value, price: num('jc_p'), tags: $('#jc_t').value, notes: $('#jc_n').value, stop_moved: !!$('#jc_m').value}); drawJ();
+      }
+    } catch (err) {
+      const t = a === 'pfsave' || a === 'rm' || a.startsWith('add') && a !== 'journal' ? $('#pfmsg') : null;
+      if (t) t.textContent = err.message; else msg(err.message);
+      if (a === 'journal') { const m = $('#jmsg' + b.dataset.i); if (m) m.textContent = err.message; }
+    }
+  };
 }
 
 function renderGoldNews(d){
