@@ -119,7 +119,40 @@ reproducible; medium = real weakness with a bounded effect; low = hygiene.
 3. **The text of Phase 7.**
 4. **Your risk limits:** maximum open risk per account, daily loss limit, maximum open positions.
 
-## 5. Rules this work follows
+## 5. Status of the findings after this change
+
+| Finding | Status |
+| --- | --- |
+| C1 no M5 history | Open. Importer for MT5 CSV exports exists (`marketdata.parse_csv`); waiting for your export and server UTC offset. |
+| C2 page is not what was backtested | Mitigated, not fixed. Plans are now labelled UNVALIDATED on every chart. Real fix is Phases 4 to 6. |
+| C3 no engine tests | Fixed for the foundations: 3 new test files (market data, risk, engine). Strategy tests come with each strategy. |
+| H1 costs | Partly fixed. `risk.py` has the cost model; the backtest shows cost sensitivity and the break-even cost. Plans are still gross of costs. |
+| H2 traceability | Fixed for the foundations: provenance, hashes, on-disk store with recorded restatements. Not yet wired into every fetch. |
+| H3 instrument mismatch | Disclosed on the page. Roll-aware or spot history is still open. |
+| H4 forming bar | Disclosed on the page; `marketdata.completed()` ready. Signals still use the forming bar until Phase 3. |
+| H5 overfitting | Open (Phase 6). |
+| H6 news scoring | Open (Phase 8). |
+| M2 sizing and contract specs | Fixed in `risk.py` (lot step, minimum lot, costs, broker overrides). Not yet shown on the page. |
+| M3 to M5, L1 to L3 | Open. |
+
+## 6. What the first data checks found (live Yahoo, 2026-11-16)
+
+- GC=F 1h history has a 61-hour hole between 2026-07-10 and 2026-07-15 that no holiday explains, plus four
+  shorter holiday-shaped gaps. It is 149 missing hourly bars in total (95% complete over six months). Any level
+  built from that stretch is built from partial data.
+- Yahoo stamps the newest bar with the quote time (for example 11:06:32) instead of the bar start, and that bar
+  is still forming. The checker now says so instead of calling it an overlap.
+- GC=F daily has 19 single missing weekdays that are most likely exchange holidays; they are counted separately.
+- Daily and weekly bar stamps move by an hour at daylight-saving changes; the checker tolerates that.
+
+## 7. First cost result (daily setups, exit at first target, 10 years of GC=F)
+
+- Average before any cost: +0.07R with a 95% band of about plus or minus 0.21R, so it cannot be told from luck.
+- Break-even round-trip cost: about $0.95 per ounce. A realistic spread plus slippage plus commission on an
+  XAUUSD CFD can sit near that, so even the point estimate has almost no margin.
+- On BTC-USD the same setups lose before any cost (-0.12R), and more after it.
+
+## 8. Rules this work follows
 
 - Research results and live verified evidence stay separate, and simulated or sample data is labelled.
 - No order is ever placed or modified. The system stays read-only and paper only.
