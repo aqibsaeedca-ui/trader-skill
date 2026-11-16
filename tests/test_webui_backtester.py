@@ -259,7 +259,7 @@ class Statistics(unittest.TestCase):
 
     def test_holm(self):
         self.assertEqual([round(x, 6) for x in bt.holm([0.01, 0.04, 0.03])], [0.03, 0.06, 0.06])
-        self.assertEqual(bt.holm([0.6, 0.9]), [1.0, 0.9])
+        self.assertEqual(bt.holm([0.6, 0.9]), [1.0, 1.0])               # step-down adjustment is monotone
         self.assertTrue(all(0 <= x <= 1 for x in bt.holm([0.5, 0.7, 0.9])))
         self.assertEqual(bt.holm([0.001]), [0.001])
 
