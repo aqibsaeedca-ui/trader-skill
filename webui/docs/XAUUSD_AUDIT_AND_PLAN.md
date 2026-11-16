@@ -97,17 +97,17 @@ reproducible; medium = real weakness with a bounded effect; low = hygiene.
 | Phase | Scope | Status after this change |
 | --- | --- | --- |
 | 1 Audit | This document | Done |
-| 2 Data architecture | Provider adapters, validation, provenance, store, CSV import with spreads | Foundation done (`marketdata.py`). Not done: live MT5 and OANDA adapters, tick data, economic calendar. |
-| 3 Regimes and structure | ADX/ATR/efficiency regimes, BOS/CHoCH, sweeps, FVG, order blocks, causal | Not started |
-| 4 Strategies A to D | Breakout-retest, trend continuation, sweep reversal, range | Not started |
-| 5 Statistical and ML layer | Logistic and gradient boosting baselines, calibration | Not started. Needs M5 history first (C1). |
-| 6 Backtester | Event-driven, walk-forward, holdout, purging, stress tests, bootstrap, deflated Sharpe | Partial: cost sensitivity and break-even cost added |
-| 7 | Not present in the request (it jumps from 6 to 8) | Awaiting your text |
-| 8 Macro engine | CPI, NFP, FOMC timestamps, expectations versus actual, event-window tests | Not started |
-| 9 Dashboard | Overview, trade assessment, risk monitor, performance, journal | Partial: provider and quote-time strip, data-quality panel, unvalidated labels |
-| 10 Watcher | Setup validity, regime change, event, spread, stale-data, exposure alerts | Not started |
-| 11 Tests | Unit, integration, regression | Started: market data, risk and engine tests |
-| 12 Delivery | Separate commits, no push without approval | Following this rule |
+| 2 Data architecture | Provider adapters, validation, provenance, store, CSV import with spreads | Built: Yahoo, OANDA (candles with bid and ask, needs your token), Dukascopy (free ticks with bid and ask, download needs `--yes`), CSV import, validation, hashes, store. MetaTrader 5 deliberately not integrated. Not exercised live: OANDA and Dukascopy. |
+| 3 Regimes and structure | ADX/ATR/efficiency regimes, BOS/CHoCH, sweeps, FVG, order blocks, causal | Built (`regimes.py`, `indicators.py`), with non-repainting tests |
+| 4 Strategies A to D | Breakout-retest, trend continuation, sweep reversal, range | Built (`strategies.py`), each independently configurable and gated |
+| 5 Statistical and ML layer | Logistic and gradient boosting baselines, calibration | Built in pure Python (`ml.py`) with rejection rules. On real gold data it is rejected. |
+| 6 Backtester | Event-driven, walk-forward, holdout, purging, stress tests, bootstrap, deflated Sharpe | Built (`backtester.py`) |
+| 7 | Not present in the request (it jumps from 6 to 8) | Still missing: send the text if it matters |
+| 8 Macro engine | CPI, NFP, FOMC timestamps, expectations versus actual, event-window tests | Built (`macro.py`): official FOMC, derived NFP, CSV for CPI and PCE, observed reactions, news-filter test |
+| 9 Dashboard | Overview, trade assessment, risk monitor, performance, journal | Built: new Gold intelligence page |
+| 10 Watcher | Setup validity, regime change, event, spread, stale-data, exposure alerts | Built (`watch_extras.py`), Bitcoin alerts unchanged by default |
+| 11 Tests | Unit, integration, regression | 600+ tests; every new module has its own test file |
+| 12 Delivery | Separate commits, no push without approval | Following this rule; nothing is pushed |
 
 ## 4. What I need from you before Phase 2 can finish
 
@@ -123,17 +123,19 @@ reproducible; medium = real weakness with a bounded effect; low = hygiene.
 
 | Finding | Status |
 | --- | --- |
-| C1 no M5 history | Open. Importer for MT5 CSV exports exists (`marketdata.parse_csv`); waiting for your export and server UTC offset. |
-| C2 page is not what was backtested | Mitigated, not fixed. Plans are now labelled UNVALIDATED on every chart. Real fix is Phases 4 to 6. |
-| C3 no engine tests | Fixed for the foundations: 3 new test files (market data, risk, engine). Strategy tests come with each strategy. |
-| H1 costs | Partly fixed. `risk.py` has the cost model; the backtest shows cost sensitivity and the break-even cost. Plans are still gross of costs. |
-| H2 traceability | Fixed for the foundations: provenance, hashes, on-disk store with recorded restatements. Not yet wired into every fetch. |
-| H3 instrument mismatch | Disclosed on the page. Roll-aware or spot history is still open. |
-| H4 forming bar | Disclosed on the page; `marketdata.completed()` ready. Signals still use the forming bar until Phase 3. |
-| H5 overfitting | Open (Phase 6). |
-| H6 news scoring | Open (Phase 8). |
-| M2 sizing and contract specs | Fixed in `risk.py` (lot step, minimum lot, costs, broker overrides). Not yet shown on the page. |
-| M3 to M5, L1 to L3 | Open. |
+| C1 no M5 history | Open in practice. Yahoo still cannot supply it. The Dukascopy and OANDA adapters and the CSV importer are ready; until you approve a download or supply a file, five-minute strategies cannot be tested. |
+| C2 page is not what was backtested | Fixed for the new dashboard: it shows only the four tested strategies, each with its own validation record. The older Gold assessment page keeps its UNVALIDATED label. |
+| C3 no engine tests | Fixed: every new module has tests, including causality, execution, statistics, gates and the HTTP guards. |
+| H1 costs | Fixed in the new engine: spread, slippage and commission are in every fill, with 0x to 3x stress and a break-even cost. The older assessment page is still gross of costs. |
+| H2 traceability | Fixed for research runs: dataset hash, seed, configuration and code version are stored with every result. |
+| H3 instrument mismatch | Disclosed everywhere. Spot-quality history needs Dukascopy or OANDA data. |
+| H4 forming bar | Fixed in the new engine: only closed bars are used. The older assessment page still uses the forming bar. |
+| H5 overfitting | Addressed: walk-forward selection, embargo, an untouched holdout with a use-once log, deflated Sharpe and Holm correction. It cannot be fully removed with so little data. |
+| H6 news scoring | Partly addressed: releases are timestamped with source and reliability and reactions are measured, but the keyword scores on the news page are still not validated. |
+| M1 cross-asset alignment | Open. |
+| M2 sizing and contract specs | Fixed in `risk.py` and used by the dashboard. |
+| M3 watcher | Fixed: alert state is saved, new alert kinds are deduplicated and rate-limited. |
+| M4 and M5, L1 to L3 | Open or unchanged. |
 
 ## 6. What the first data checks found (live Yahoo, 2026-11-16)
 
@@ -152,7 +154,18 @@ reproducible; medium = real weakness with a bounded effect; low = hygiene.
   XAUUSD CFD can sit near that, so even the point estimate has almost no margin.
 - On BTC-USD the same setups lose before any cost (-0.12R), and more after it.
 
-## 8. Rules this work follows
+## 8. First results from the new engine (live Yahoo data, 2026-11-16)
+
+- GC=F 1 hour, 2853 closed bars (about six months). Each of the four strategies produced between 2 and 13 out-of-sample trades
+  and 3 to 5 holdout trades. All four are `INSUFFICIENT SAMPLE`: nothing can be said for or against them yet.
+- Machine learning (target before stop, costs included): rejected. Out-of-sample AUC was 0.44 to 0.47, below chance, and the
+  selected trades did no better than taking every trade.
+- Regime labels on gold 1 hour: sideways 46 percent, weak trend 17, strong downtrend 14, strong uptrend 12, major sweep reversal 8.
+- Observed reactions of hourly gold: after FOMC statements the move over the first hour was about 8 times a normal hour (4 events),
+  after derived NFP dates about 2 times (5 events). Both are far too few events to rely on.
+- Result: the dashboard shows NO TRADE, as it should.
+
+## 9. Rules this work follows
 
 - Research results and live verified evidence stay separate, and simulated or sample data is labelled.
 - No order is ever placed or modified. The system stays read-only and paper only.
