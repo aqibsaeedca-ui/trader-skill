@@ -253,6 +253,8 @@ def build(recs, bars_by_symbol, events, label, max_rows=40):
     """The full report for one population of graded records."""
     ctxs = build_contexts(bars_by_symbol, events or [])
     cl, size = clusters(recs, ctxs)
+    for r in recs:
+        r["opportunity"] = cl.get(r["id"])
     ov = overlap_counts([r for r in recs if (r.get("result") or {}).get("fill_price") is not None], ctxs)
     rows, audits, cause_ok, cause_unk = [], {}, {k: 0 for k, _ in CATEGORIES}, {k: 0 for k, _ in CATEGORIES}
     losses = 0

@@ -303,6 +303,7 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'experiments' && d.code === 0) { try { return renderExperiments(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'lossattr' && d.code === 0) { try { return renderLossAttribution(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The loss attribution could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'scorecard' && d.code === 0) { try { return renderScorecard(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The scorecard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'pending' && d.code === 0) { try { return renderPending(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The pending orders could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
@@ -791,6 +792,34 @@ function renderResearch(d){
   $('#result').innerHTML = hero + how + '<div class="in-sec">The four strategies</div><div class="rs-grid">' + cards + '</div>' +
     (mlHtml ? '<div class="in-sec">Prediction model</div><div class="rs-grid">' + mlHtml + dataCard + '</div>' : '<div class="rs-grid">' + dataCard + '</div>') + next +
     '<div class="note">' + esc(g.note) + ' Not financial advice.</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 80000)) + '</pre></details>';
+}
+
+function renderExperiments(d){
+  const g = JSON.parse(d.stdout);
+  const R = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const P = x => x == null ? 'n/a' : Math.round(x * 100) + '%';
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : '';
+  const adopted = g.hypotheses.filter(h => h.decision === 'ADOPTED');
+  const cls = {ADOPTED: 'pass', REJECTED: 'fail', 'INSUFFICIENT SAMPLE': 'wait', BASELINE: 'wait'};
+  const hero = '<div class="rs-hero ' + (adopted.length ? 'some' : 'none') + '"><div class="big">' + (adopted.length ? adopted.length + ' variant(s) passed the pre-registered test' : 'No variant passed the pre-registered test') + '</div><div>' +
+    'Every rule, threshold and decision criterion was written down and committed before the experiments were run, and each was evaluated once on the last ' + Math.round((1 - g.split.fraction) * 100) + '% of the history (from ' + esc(when(g.split.cut)) + '), which was never used to choose anything. ' +
+    'A variant is adopted only with at least 100 filled test opportunities, a positive average after costs whose corrected 95% band stays above zero, a better result than the baseline, and a consistent result on the earlier part of the history. ' + esc(g.breakout_policy) + '. ' + esc(g.pullback_policy) + '.</div>' +
+    '<div class="rs-meta"><span class="chip">' + g.split.train_opportunities + ' opportunities to learn from</span><span class="chip">' + g.split.test_opportunities + ' to test on</span><span class="chip">' + g.hypotheses_total + ' hypotheses (multiple-testing corrected)</span><span class="chip">created ' + esc(when(g.created)) + '</span></div></div>';
+  const row = h => '<tr><td><b>' + esc(h.id) + '</b></td><td>' + esc(h.name) + '<div class="sub">' + esc(h.definition) + '</div></td><td>' + h.train.trades + '</td><td>' + R(h.train.mean_r) + '</td><td>' + h.test.trades + ' <span class="sub">of ' + h.test.recommended + ' (' + P(h.test.fill_rate) + ' fill)</span></td><td>' + R(h.test.mean_r) + (h.test.band ? '<div class="sub">95% band ' + R(h.test.band[0]) + ' to ' + R(h.test.band[1]) + '</div>' : '') + '</td><td>' + R(h.test.per_opportunity_r) + '</td><td>' + N(h.test.profit_factor) + '</td><td>' + N(h.test.max_drawdown_r, 1) + 'R</td>' +
+    '<td><span class="rs-state ' + (cls[h.decision] || 'wait') + '">' + esc(h.decision) + '</span><div class="sub">' + h.reasons.map(esc).join('<br>') + '</div></td></tr>';
+  const table = ph => '<table class="in-t"><tr><th></th><th>Variant</th><th>Train fills</th><th>Train avg</th><th>Test fills</th><th>Test avg per trade</th><th>Per recommended opportunity</th><th>Profit factor</th><th>Worst drawdown</th><th>Decision</th></tr>' + g.hypotheses.filter(h => h.phase === ph).map(row).join('') + '</table>';
+  const rg = g.regime;
+  const regime = '<div class="rs-card"><h4>Regime classifier, version 2</h4><div class="sub">Nine classes from completed candles only: strong and weak bullish and bearish trend, sideways range, volatility compression, volatility expansion, news instability, uncertain.</div>' +
+    '<span class="rs-state ' + (rg.has_signal ? 'pass' : 'fail') + '">' + (rg.has_signal ? 'Has signal' : 'No detectable signal') + '</span><div class="sub" style="margin-top:6px">' + esc(rg.verdict) + '. Share of net-R variance explained on the test split: ' + N(rg.test_eta2 * 100, 1) + '% (random labels reach ' + N(rg.permutation_95th * 100, 1) + '% or less 95% of the time).</div>' +
+    '<table class="in-t"><tr><th>Feature group removed</th><th>Test explained share</th><th>Change</th><th>Adds value?</th></tr>' + rg.ablation.map(a => '<tr><td>' + esc(a.group.replace(/_/g, ' ')) + '</td><td>' + N(a.test_eta2 == null ? null : a.test_eta2 * 100, 2) + '%</td><td>' + N(a.change == null ? null : a.change * 100, 2) + ' pts</td><td>' + (a.adds_value ? 'yes' : 'no') + '</td></tr>').join('') + '</table>' +
+    '<table class="in-t"><tr><th>Regime</th><th>Test trades</th><th>Avg result</th></tr>' + Object.entries(rg.by_regime).map(([k, v]) => '<tr><td>' + esc(k.replace(/_/g, ' ')) + '</td><td>' + v.trades + '</td><td>' + R(v.mean_r) + '</td></tr>').join('') + '</table><div class="sub">Most trades land in "uncertain" because the classifier demands that the one-hour and four-hour structure agree. That is a finding about how rarely they do, not a tuned setting.</div></div>';
+  $('#result').innerHTML = hero +
+    '<div class="in-sec">Phase 4: pullback plans. Trend filter and confirmed reversal</div>' + table(4) +
+    '<div class="in-sec">Phase 5: breakout and breakdown plans. Entry modes and false-breakout filters</div>' + table(5) +
+    '<div class="in-sec">Phase 3: market regimes and ablation</div><div class="rs-grid">' + regime + '</div>' +
+    '<div class="note"><b>Not tested, because the data cannot support it:</b> ' + g.not_tested.map(esc).join('; ') + '.</div><div class="note">' + esc(g.caution) + '</div>' +
+    '<details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
 }
 
 function renderLossAttribution(d){

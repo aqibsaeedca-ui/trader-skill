@@ -65,6 +65,11 @@ COMMANDS = [
          help="Every trade plan the console recommends, for Gold and Bitcoin, is recorded when shown and graded later against what price actually did, "
               "whether or not you took it: would it have won, lost, or never triggered. Shows the right/wrong record with honest bands.",
          script="webui/scorecard.py", fixed=["--json"], view="scorecard", params=[]),
+    dict(id="experiments", group="Gold", title="Regime, trend and breakout experiments",
+         help="The pre-registered Phase 3 to 5 tests: a nine-class regime classifier with ablation, a higher-timeframe trend filter, a confirmed-reversal filter, and breakout entry modes "
+              "and false-breakout filters, each judged once on a held-out test period. Shows the saved result. Run 'Backtest every recommendation' first if you want fresh data, then tick re-run.",
+         script="webui/experiments.py", fixed=["--json"], view="experiments",
+         params=[P("rerun", "Recompute with the latest data (about 30 seconds)", "check", flag="--rerun")]),
     dict(id="lossattr", group="Gold", title="Loss attribution report",
          help="What happened to every recommendation and why the losing ones lost. A cause is shown only when recorded evidence supports it, otherwise it is marked unknown. "
               "Separates recommendations from simulated fills and open positions, counts repeated ideas once, and audits the simulator's own arithmetic.",

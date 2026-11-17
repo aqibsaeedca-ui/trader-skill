@@ -28,6 +28,7 @@ import scorecard as sc  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "trader", "recommendation_backtest.json")
+OPPS = os.path.join(ROOT, "trader", "replay_opportunities.json")
 DEFAULT_SYMBOLS = ("GC=F", "BTC-USD")
 MIN_BARS = 60
 
@@ -142,6 +143,14 @@ def run(symbols=DEFAULT_SYMBOLS, every=4, fetch=None, path=None, analyse_bars=No
             import loss_attribution as la
             import macro
             doc["attribution"] = la.build(allrecs, all_bars, macro.load_store(), "historical replay")
+            first = {}
+            for x in sorted(allrecs, key=lambda y: y["created_ts"]):      # the first recommendation of each opportunity represents it (used by the experiments)
+                first.setdefault(x.get("opportunity"), x)
+            if path is None:
+                os.makedirs(os.path.dirname(OPPS), exist_ok=True)
+                with open(OPPS + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(list(first.values()), f)
+                os.replace(OPPS + ".tmp", OPPS)
         except Exception as e:
             doc["attribution_error"] = str(e)[:200]
     doc["errors"] = errors
