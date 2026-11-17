@@ -134,6 +134,64 @@ class Run(unittest.TestCase):
         self.assertEqual(rec["events"]["high"], len(ev))
 
 
+class PendingFamily(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def go(self, **kw):
+        return rs.run("GC=F", "60m", seed=7, quick=True, bars_override=noise(1500, seed=6), events=[], family="pending",
+                      out_path=os.path.join(self.dir, "v.json"), holdout_store=os.path.join(self.dir, "h.json"),
+                      model_dir=os.path.join(self.dir, "m"), **kw)
+
+    def test_keys_never_collide_with_the_core_family(self):
+        self.assertEqual(rs.key("GC=F", "60m"), "GC=F|60m")
+        self.assertEqual(rs.key("GC=F", "60m", "core"), "GC=F|60m")
+        self.assertEqual(rs.key("GC=F", "60m", "pending"), "GC=F|60m|pending")
+
+    def test_the_pending_family_has_its_own_record_with_order_statistics(self):
+        rec = self.go()
+        self.assertEqual(rec["family"], "pending")
+        self.assertEqual(set(rec["strategies"]), {"buy_stop", "sell_stop", "buy_limit", "sell_limit"})
+        for name, s in rec["strategies"].items():
+            o = s["orders"]
+            self.assertIn("fill_rate", o, name)
+            self.assertEqual(o["filled"] + o["expired"] + o["cancelled"] + o["skipped"], o["submitted"], name)
+            self.assertFalse(s["status"].startswith("VALIDATED"), name)                 # noise never validates
+        self.assertNotIn("ml", rec)
+        saved = rs.load_validation(os.path.join(self.dir, "v.json"))
+        self.assertIn("GC=F|60m|pending", saved)
+        self.assertNotIn("GC=F|60m", saved)
+
+    def test_the_broker_profile_supplies_costs_and_the_minimum_stop_distance(self):
+        orders = rs.__dict__["orders"] if "orders" in rs.__dict__ else load("webui", "orders")
+        s = orders.clean_settings(dict(profile=dict(spread=0.5, slippage=0.2, stops_level_points=80, commission_per_lot=7.0)))
+        rec = self.go(settings=s)
+        self.assertAlmostEqual(rec["costs"]["spread"], 0.5)
+        self.assertAlmostEqual(rec["costs"]["slippage"], 0.2)
+        self.assertAlmostEqual(rec["costs"]["commission_per_unit"], 0.07)
+        self.assertAlmostEqual(rec["broker"]["min_stop_distance"], 0.8)
+        self.assertFalse(rec["broker"]["verified"])
+
+    def test_the_minimum_stop_setting_is_restored_afterwards(self):
+        import pending_strategies
+        before = pending_strategies.DEFAULT_MIN_STOP
+        orders = load("webui", "orders")
+        self.go(settings=orders.clean_settings(dict(profile=dict(stops_level_points=500))))
+        self.assertEqual(pending_strategies.DEFAULT_MIN_STOP, before)
+
+    def test_explicit_cost_overrides_win_over_the_profile(self):
+        rec = self.go(cost_overrides=dict(spread=0.9, slippage=None, commission_per_unit=None))
+        self.assertAlmostEqual(rec["costs"]["spread"], 0.9)
+        self.assertAlmostEqual(rec["costs"]["slippage"], 0.1)
+
+    def test_unknown_family(self):
+        with self.assertRaises(SystemExit):
+            rs.run("GC=F", "60m", bars_override=noise(600), events=[], out_path="", family="bogus")
+
+
 class Data(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()

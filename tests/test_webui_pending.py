@@ -261,6 +261,34 @@ class Execution(unittest.TestCase):
         self.assertAlmostEqual(t["entry_slip"], 0.0)
 
 
+class LimitFillBar(unittest.TestCase):
+    """The high of the bar that fills a limit order may have come before the fill, so no target is credited on that bar."""
+
+    def test_no_target_on_the_bar_a_limit_fills(self):
+        rows = [(100, 100.4, 99.6, 100), (100.5, 106.0, 98.0, 105.0), (105, 106.5, 104.0, 106.0)]          # bar 1 fills at 99 and touches 104
+        (t,), _ = bt.execute(bars_from(rows), [osig(0, "limit", "long", 99.0, 95.0, [104.0], expires=2)], FREE, dict(max_hold=10))
+        self.assertEqual(t["exits"][0]["i"], 2)                                                                # credited a bar later, not on the fill bar
+        self.assertEqual(t["exits"][0]["how"], "target 1")
+
+    def test_the_stop_can_still_hit_on_that_bar(self):
+        rows = [(100, 100.4, 99.6, 100), (100.5, 106.0, 94.0, 96.0), (96, 97, 95.5, 96)]                    # closes at 96, above the stop, so the order is not cancelled
+        (t,), _ = bt.execute(bars_from(rows), [osig(0, "limit", "long", 99.0, 95.0, [104.0], expires=2)], FREE, dict(max_hold=10))
+        self.assertEqual((t["exits"][0]["i"], t["exits"][0]["how"]), (1, "stop"))
+        self.assertAlmostEqual(t["r"], -1.0)
+
+    def test_short_limits_mirror_it(self):
+        rows = [(100, 100.4, 99.6, 100), (99.5, 102.5, 94.0, 95.0), (95, 96, 93, 94)]
+        (t,), _ = bt.execute(bars_from(rows), [osig(0, "limit", "short", 101.0, 105.0, [96.0], expires=2)], FREE, dict(max_hold=10))
+        self.assertEqual(t["exits"][0]["i"], 2)
+
+    def test_stop_entries_and_market_orders_keep_same_bar_targets(self):
+        rows = [(100, 100.4, 99.6, 100), (100.5, 106.0, 100.0, 105.0), (105, 106, 104, 105)]
+        (t,), _ = bt.execute(bars_from(rows), [osig(0, "stop", "long", 101.0, 98.0, [104.0], expires=2)], FREE, dict(max_hold=10))
+        self.assertEqual(t["exits"][0]["i"], 1)                                                                # price crossed the trigger on its way to 106
+        (m,), _ = bt.execute(bars_from(rows), [osig(0, "market", "long", 100.0, 98.0, [104.0], expires=1)], FREE, dict(max_hold=10))
+        self.assertEqual(m["exits"][0]["i"], 1)
+
+
 class OrderStatistics(unittest.TestCase):
     def run_three(self):
         rows = [(100, 100.4, 99.6, 100)] * 2 + [(100, 100.5, 99.5, 100)] * 30

@@ -113,7 +113,9 @@ def _simulate(bars, sig, c, cfg):
             exits.append((m, px, remaining, "breakeven" if (t_hit and stop_cur == fill) else "stop"))
             remaining, exit_i, how_last = 0.0, m, "stop"
             break
-        while t_hit < len(targets) and remaining > 1e-9:
+        # On the bar a LIMIT order fills, the high may have printed BEFORE the pullback that filled it, so a target cannot be
+        # credited on that bar (only the stop can hit). Stop entries are different: price must cross the trigger on its way up.
+        while t_hit < len(targets) and remaining > 1e-9 and not (m == fill_i and sig["kind"] == "limit"):
             tg = targets[t_hit]
             reached = (h >= tg) if sg == 1 else (l + half <= tg)
             if not reached:

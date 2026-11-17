@@ -46,6 +46,10 @@ class PendingBase(strategies.Strategy):
     defaults = dict(expiry_bars=8, stop_atr=0.30, min_net_rr=1.0, max_dist_atr=2.0, min_risk_atr=0.6, max_risk_atr=3.5, min_touches=1,
                     touch_atr=0.25, max_cost_r=0.20, min_stop=DEFAULT_MIN_STOP, buffer_atr=0.15, limit_buf_atr=0.05)
 
+    def __init__(self, **params):
+        params.setdefault("min_stop", DEFAULT_MIN_STOP)      # research sets this from the broker profile before it builds strategies
+        super().__init__(**params)
+
     def reset(self):
         self.live = {}                       # level key -> bar index until which an order for it is already working
         self.noted = {}                      # (level key, reason) -> bar index, so a refusal is recorded once, not every bar

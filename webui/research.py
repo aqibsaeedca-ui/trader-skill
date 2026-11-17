@@ -30,8 +30,18 @@ MAX_HOLD = {"1m": 120, "5m": 72, "15m": 48, "30m": 48, "60m": 48, "1h": 48, "1d"
 PLACEHOLDER_COSTS = {"gold": dict(spread=0.30, slippage=0.10), "btc": dict(spread=15.0, slippage=10.0)}
 
 
-def key(symbol, interval):
-    return "%s|%s" % (symbol, interval)
+def key(symbol, interval, family="core"):
+    """Validation records are kept per market, chart and strategy family, so the pending-order family never mixes with the core four."""
+    return "%s|%s" % (symbol, interval) + ("" if family == "core" else "|" + family)
+
+
+def family_names(family):
+    if family == "pending":
+        import pending_strategies
+        return list(pending_strategies.PENDING)
+    if family == "core":
+        return list(st.STRATEGIES)
+    raise SystemExit("error: unknown strategy family %r" % family)
 
 
 def load_validation(path=None):
@@ -45,7 +55,7 @@ def load_validation(path=None):
 def save_validation(rec, path=None):
     p = path or VALIDATION
     data = load_validation(p)
-    data[key(rec["symbol"], rec["interval"])] = rec
+    data[key(rec["symbol"], rec["interval"], rec.get("family", "core"))] = rec
     os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -118,7 +128,29 @@ def _clean(o):
 
 
 def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=True, quick=False, holdout_store=None, bars_override=None,
-        out_path=None, model_dir=None, events=None):
+        out_path=None, model_dir=None, events=None, family="core", settings=None):
+    """family 'core' tests the original four strategies; 'pending' tests BUY STOP, SELL STOP, BUY LIMIT and SELL LIMIT, using your
+    saved broker profile (costs and minimum stop distance) when there is one. ML is only run for the core family."""
+    import orders
+    import pending_strategies as pst
+    names_in_family = family_names(family)
+    broker = None
+    if family == "pending":
+        broker = (settings or orders.load_settings())["profile"]
+        cost_overrides = dict(dict(spread=broker["spread"], slippage=broker["slippage"],
+                                   commission_per_unit=broker["commission_per_lot"] / broker["units_per_lot"]), **{k: v for k, v in (cost_overrides or {}).items() if v is not None})
+        do_ml = False
+    saved_min_stop = pst.DEFAULT_MIN_STOP
+    if broker:
+        pst.DEFAULT_MIN_STOP = orders.min_distance(broker)
+    try:
+        return _run(symbol, interval, source, seed, cost_overrides, do_ml, quick, holdout_store, bars_override, out_path, model_dir, events, family,
+                    names_in_family, broker)
+    finally:
+        pst.DEFAULT_MIN_STOP = saved_min_stop
+
+
+def _run(symbol, interval, source, seed, cost_overrides, do_ml, quick, holdout_store, bars_override, out_path, model_dir, events, family, names_in_family, broker):
     t0 = time.time()
     if bars_override is not None:
         bars, info, spread = bars_override, dict(source="supplied", rows=len(bars_override), sha256=bt.dataset_hash(bars_override), quality="n/a", issues=[],
@@ -133,9 +165,9 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
     ev_high = [e["ts"] for e in ev if e["importance"] == "high"]
     exec_cfg = dict(bt.EXEC_DEFAULTS, max_hold=MAX_HOLD.get(interval, 48))
     wf = wf_config(len(bars))
-    total_grid = sum(len(st.param_grid(n)) for n in st.STRATEGIES)
+    total_grid = sum(len(st.param_grid(n)) for n in names_in_family)
     results, pvals = {}, {}
-    for name in st.STRATEGIES:
+    for name in names_in_family:
         r = bt.walk_forward(bars, name, c, exec_cfg, wf, interval_sec=step, htf_sec=HTF.get(interval), event_times=ev_high,
                             n_trials_extra=total_grid - len(st.param_grid(name)), holdout_store=holdout_store, symbol=symbol, interval=interval)
         chosen = (r["holdout"] or {}).get("params") or (r["folds"][-1].get("chosen") if r["folds"] and r["folds"][-1].get("chosen") else None)
@@ -155,6 +187,7 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
             by_side=bt.segment(oos, lambda t: t["side"]), by_session=bt.segment(oos, lambda t: t["session"]),
             by_regime=bt.segment(oos, lambda t: t["regime"]), grid_oos=r["all_param_summaries"],
             signals_total=len(full["signals"]), trades_total=len(full["trades"]), rejections=dict(sorted(rejections.items(), key=lambda kv: -kv[1])),
+            orders=r["orders"],
             news_filter=macro.evaluate_news_filter(oos, ev) if ev else dict(verdict="no events stored: run macro.py fetch-fomc and add-nfp", recommended=False),
             record=bt.run_record(bars, name, symbol, interval, c, exec_cfg, wf, bt.GATE_DEFAULTS, seed, dict(params=chosen)))
     names = list(results)
@@ -163,7 +196,8 @@ def run(symbol, interval, source="yahoo", seed=7, cost_overrides=None, do_ml=Tru
         results[n]["holm_p"] = a
     out = dict(symbol=symbol, interval=interval, created=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), seed=seed, data=info,
                costs=dict(c, source=cost_src), exec=dict(exec_cfg, split=list(exec_cfg["split"])), walk_forward=wf, strategies=results,
-               events=dict(count=len(ev), high=len(ev_high)), code_version=bt.code_version(), sample_data=False,
+               events=dict(count=len(ev), high=len(ev_high)), code_version=bt.code_version(), sample_data=False, family=family,
+               broker=(dict(broker, min_stop_distance=round(broker["stops_level_points"] * broker["point"], 6)) if broker else None),
                note="Research on past data. Statuses describe out-of-sample evidence only, not a prediction.")
     if do_ml:
         horizon = exec_cfg["max_hold"] // 2
@@ -232,12 +266,13 @@ def main(argv=None):
     r.add_argument("--spread", type=float, default=None, help="round-trip spread in price units")
     r.add_argument("--slippage", type=float, default=None, help="slippage per side in price units")
     r.add_argument("--commission", type=float, default=None, help="commission per unit, round trip")
+    r.add_argument("--family", default="core", choices=["core", "pending"], help="core = the original four strategies; pending = BUY/SELL STOP and LIMIT orders")
     r.add_argument("--no-ml", action="store_true")
     r.add_argument("--quick", action="store_true")
     r.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     ov = dict(spread=a.spread, slippage=a.slippage, commission_per_unit=a.commission)
-    rec = run(a.symbol, a.interval, a.source, a.seed, ov, not a.no_ml, a.quick)
+    rec = run(a.symbol, a.interval, a.source, a.seed, ov, not a.no_ml, a.quick, family=a.family)
     print(json.dumps(slim(rec)) if a.json else render(rec))
     return 0
 
