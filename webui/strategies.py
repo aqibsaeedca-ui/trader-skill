@@ -37,6 +37,7 @@ class Strategy:
             raise ValueError("unknown parameter(s) for %s: %s" % (self.name, sorted(unknown)))
         self.p = dict(self.defaults, **params)
         self.cost_per_unit = 0.0                # round-trip cost in price units; the backtester sets it
+        self.spread = 0.0                       # full spread in price units, for strategies that place orders around bid and ask
         self.interval = ""
         self.rejected = []                      # (bar index, reason) for signals that were considered and refused
         self.reset()
@@ -363,15 +364,23 @@ class RangeTrading(Strategy):
 STRATEGIES = {c.name: c for c in (BreakoutRetest, TrendContinuation, LiquiditySweepReversal, RangeTrading)}
 
 
+def lookup(name):
+    """A strategy class by name: the four core strategies, then the pending-order family."""
+    if name in STRATEGIES:
+        return STRATEGIES[name]
+    import pending_strategies                      # imported late: it imports this module
+    if name in pending_strategies.PENDING:
+        return pending_strategies.PENDING[name]
+    raise ValueError("unknown strategy %r" % name)
+
+
 def make(name, **params):
-    if name not in STRATEGIES:
-        raise ValueError("unknown strategy %r" % name)
-    return STRATEGIES[name](**params)
+    return lookup(name)(**params)
 
 
 def param_grid(name):
     """All combinations of the strategy's small search grid, as a list of dicts."""
-    g = STRATEGIES[name].grid
+    g = lookup(name).grid
     combos = [{}]
     for k, vals in g.items():
         combos = [dict(c, **{k: v}) for c in combos for v in vals]

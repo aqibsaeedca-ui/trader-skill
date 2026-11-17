@@ -15,6 +15,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 
@@ -74,6 +75,8 @@ def _simulate(bars, sig, c, cfg):
                 fill_i, fill = j, price
                 break
         elif sig["kind"] == "stop":
+            if beyond_stop:
+                return None, "cancelled: closed beyond the stop before filling"
             trig = (h + half >= price) if sg == 1 else (l - half <= price)
             if trig:
                 fill_i = j
@@ -132,6 +135,7 @@ def _simulate(bars, sig, c, cfg):
     r = sum(wt * (px - fill) * sg / risk for _, px, wt, _ in exits) - c["commission_per_unit"] / risk
     return dict(id=sig["id"], strategy=sig["strategy"], side=sig["side"], decided_i=i0, decided_t=sig["decided_t"],
                 entry_i=fill_i, entry_t=bars[fill_i][0], entry=fill, stop0=stop, risk=risk, targets=targets, kind=sig["kind"],
+                order_price=price, entry_slip=(fill - price) * sg, waited=fill_i - i0,
                 exits=[dict(i=a, price=b, weight=wt, how=hw) for a, b, wt, hw in exits], exit_i=exit_i, exit_t=bars[exit_i][0],
                 r=r, cost_r=round_trip(c) / risk, mae_r=mae, mfe_r=mfe, bars_held=exit_i - fill_i, how=how_last,
                 regime=sig["regime"], session=sig["session"], planned_rr=abs(targets[0] - fill) / risk,
@@ -162,7 +166,7 @@ def execute(bars, signals, c, cfg=None):
     return trades, rejected
 
 
-def generate(bars, strategy_list, interval_sec=None, htf_sec=None, event_times=None, cost_per_unit=0.0, cfg=None):
+def generate(bars, strategy_list, interval_sec=None, htf_sec=None, event_times=None, cost_per_unit=0.0, cfg=None, spread=0.0):
     """Step the market analysis once and feed every strategy instance. Returns {id(strategy): signals}."""
     A = regimes.Analysis(bars, cfg, event_times=event_times, interval_sec=interval_sec)
     H = regimes.HTF(bars, htf_sec, cfg, event_times) if htf_sec else None
@@ -171,6 +175,7 @@ def generate(bars, strategy_list, interval_sec=None, htf_sec=None, event_times=N
         s.reset()
         s.rejected = []
         s.cost_per_unit = cost_per_unit
+        s.spread = spread
     for i in range(len(bars)):
         A.step(i)
         hs = H.at(i) if H else None
@@ -183,7 +188,7 @@ def run_strategy(bars, name, params=None, c=None, exec_cfg=None, interval_sec=No
     """One strategy, one parameter set, end to end."""
     c = c or costs()
     s = strategies.make(name, **(params or {}))
-    sigs, A = generate(bars, [s], interval_sec, htf_sec, event_times, round_trip(c))
+    sigs, A = generate(bars, [s], interval_sec, htf_sec, event_times, round_trip(c), spread=c["spread"])
     trades, rej = execute(bars, sigs[id(s)], c, exec_cfg)
     return dict(signals=sigs[id(s)], trades=trades, rejected=[dict(r, strategy=name) for r in s.rejected] + rej, analysis=A)
 
@@ -256,6 +261,38 @@ def segment(trades, key_fn):
         out[str(k)] = dict(n=s["n"], expectancy=s["expectancy"], win_rate=s["win_rate"], profit_factor=s["profit_factor"],
                            ci95=s["ci95"])
     return out
+
+
+def order_stats(signals, trades, rejected):
+    """What became of every order that was SUBMITTED (a signal that reached the execution model).
+
+    filled / expired (never reached) / cancelled (structure failed first) / skipped (another position was open, a daily
+    limit, a stop too close to the fill). Fill rate and the hit rate after a fill are reported separately, each with a
+    95% Wilson band, because an order that rarely fills is not worth the same as one that fills often. Rates are only
+    flagged `enough` with at least 30 submitted and 30 filled orders."""
+    sub, filled = len(signals), len(trades)
+    reasons = {}
+    for r in rejected:
+        key = re.sub(r"\d+(\.\d+)?", "#", r["reason"])
+        reasons[key] = reasons.get(key, 0) + 1
+    expired = sum(1 for r in rejected if r["reason"].startswith("not filled"))
+    cancelled = sum(1 for r in rejected if r["reason"].startswith("cancelled"))
+    skipped = max(0, sub - filled - expired - cancelled)
+    hit = [t for t in trades if any(e["how"].startswith("target") for e in t["exits"])]
+    stopped = [t for t in trades if not any(e["how"].startswith("target") for e in t["exits"]) and t["how"] == "stop"]
+    flo, fhi = wilson(filled, sub)
+    hlo, hhi = wilson(len(hit), filled)
+    slip = [t.get("entry_slip", 0.0) for t in trades]
+    slip_r = [t.get("entry_slip", 0.0) / t["risk"] for t in trades if t["risk"]]
+    exp = summary(trades).get("expectancy") if trades else None
+    return dict(submitted=sub, filled=filled, expired=expired, cancelled=cancelled, skipped=skipped,
+                fill_rate=(filled / sub) if sub else None, fill_ci=[flo, fhi],
+                target_hit_rate=(len(hit) / filled) if filled else None, target_hit_ci=[hlo, hhi],
+                win_rate=(sum(1 for t in trades if t["r"] > 0) / filled) if filled else None,
+                stopped_out=len(stopped), expected_per_submitted=((filled / sub) * exp) if (sub and exp is not None) else None,
+                avg_entry_slip=(sum(slip) / len(slip)) if slip else None, avg_entry_slip_r=(sum(slip_r) / len(slip_r)) if slip_r else None,
+                avg_bars_to_fill=(sum(t.get("waited", 0) for t in trades) / filled) if filled else None,
+                reasons=dict(sorted(reasons.items(), key=lambda kv: -kv[1])), enough=bool(sub >= 30 and filled >= 30))
 
 
 def block_bootstrap(rs, n_boot=1000, seed=7, block=None):
@@ -397,11 +434,11 @@ def walk_forward(bars, name, c, exec_cfg=None, wf=None, interval_sec=None, htf_s
     split = int(n * (1 - wf["holdout_frac"]))
     grid = strategies.param_grid(name)
     insts = [strategies.make(name, **g) for g in grid]
-    sigs, A = generate(bars, insts, interval_sec, htf_sec, event_times, round_trip(c))
+    sigs, A = generate(bars, insts, interval_sec, htf_sec, event_times, round_trip(c), spread=c["spread"])
     per = []
     for s, g in zip(insts, grid):
-        tr, _ = execute(bars, sigs[id(s)], c, exec_cfg)
-        per.append(dict(params=g, trades=tr))
+        tr, rj = execute(bars, sigs[id(s)], c, exec_cfg)
+        per.append(dict(params=g, trades=tr, rejected=rj, signals=sigs[id(s)]))
     folds, oos, chosen, fold_choice = [], [], [], []
     start = wf["train_min"]
     while start < split:
@@ -452,10 +489,15 @@ def walk_forward(bars, name, c, exec_cfg=None, wf=None, interval_sec=None, htf_s
             tr += [t for t in cache[k] if a <= t["decided_i"] < b]
         sm = summary(tr)
         stress_rows.append(dict(multiple=m, n=sm["n"], expectancy=sm.get("expectancy"), profit_factor=sm.get("profit_factor"), ci95=sm.get("ci95")))
+    oos_sig, oos_rej = [], []
+    for a, b, k in fold_choice:
+        oos_sig += [s for s in per[k]["signals"] if a <= s["decided_i"] < b]
+        oos_rej += [r for r in per[k]["rejected"] if a <= r["i"] < b]
+    orders = order_stats(oos_sig, oos, oos_rej)
     n_trials = len(grid) + n_trials_extra
     rs = [t["r"] for t in oos]
     halves = [summary(oos[:len(oos) // 2]).get("expectancy"), summary(oos[len(oos) // 2:]).get("expectancy")] if len(oos) >= 20 else [None, None]
-    return dict(strategy=name, folds=folds, oos_trades=oos, oos=summary(oos), holdout=holdout, stability=stab, halves=halves, stress=stress_rows,
+    return dict(strategy=name, folds=folds, oos_trades=oos, oos=summary(oos), holdout=holdout, stability=stab, halves=halves, stress=stress_rows, orders=orders,
                 bootstrap=block_bootstrap(rs, GATE_DEFAULTS["bootstrap"], wf["seed"]), dsr=deflated_sharpe(rs, n_trials),
                 n_trials=n_trials, grid_size=len(grid), embargo=embargo, split=split, wf=wf, analysis=A,
                 all_param_summaries=[dict(params=d["params"], n=len(d["trades"]), expectancy=summary(d["trades"]).get("expectancy")) for d in per])
@@ -470,7 +512,7 @@ def stress(bars, name, params, base_costs, multiples=(0.0, 1.0, 2.0, 3.0), exec_
            event_times=None, decided_range=None):
     """Re-execute the SAME signals at scaled costs (spread and slippage together). Signals are generated once at base cost."""
     s = strategies.make(name, **(params or {}))
-    sigs, _ = generate(bars, [s], interval_sec, htf_sec, event_times, round_trip(base_costs))
+    sigs, _ = generate(bars, [s], interval_sec, htf_sec, event_times, round_trip(base_costs), spread=base_costs["spread"])
     out = []
     for m in multiples:
         tr, _ = execute(bars, sigs[id(s)], scaled(base_costs, m), exec_cfg)
