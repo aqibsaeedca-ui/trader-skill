@@ -72,3 +72,16 @@ accounting; it says nothing about edge. No new hypothesis.
 - Strict mode is a setting stored locally (default off, so the baseline behaves as today). The engine may produce no trades for long periods.
 
 Total hypotheses in this document: 11 + 1 + 1 = 13.
+
+## Clarifications (added before any experiment was run)
+
+- H9 must not select strategies on the data it is judged on. For H9 only, the evidence grade of each strategy is computed from the TRAIN split
+  alone (A needs at least 100 train fills, a corrected band above zero on TRAIN, and a positive TRAIN mean), and strict mode is then judged on
+  TEST. The grade shown on the page uses the TEST record as described in Phase 7, because that is the best current evidence, but it is never used
+  to judge itself.
+- "A passes the adoption criteria for that strategy on its own" (Phase 7) means: at least 100 TEST fills, corrected lower band above zero, and a
+  positive TRAIN mean. There is no baseline comparison because the strategy is its own subject.
+- The stop-variant skip rule: if a stop variant would put the stop on the wrong side of the baseline fill price, that opportunity is skipped for
+  that variant and the skips are counted and shown.
+- Phase 8 "every recommendation as its own trade" uses all filled recommendations of the replay; "first of each opportunity" uses the opportunity
+  representatives. Both use grading engine 2.
