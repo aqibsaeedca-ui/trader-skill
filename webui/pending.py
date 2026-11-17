@@ -291,6 +291,9 @@ def create_paper(symbol, interval, order_type, acknowledge_unvalidated=False, oc
         group = "oco-" + __import__("hashlib").sha1((plan["signal_id"] + plan2["signal_id"]).encode()).hexdigest()[:8]
         made.append(paper.create(plan2, closed, step, now, [], group, status2, interval, existing, sink))
     made.insert(0, paper.create(plan, closed, step, now, hard, group, status, interval, existing, sink))
+    seen = {o['id'] for o in existing}
+    if any(o['id'] in seen for o in made):
+        raise paper.PaperError('this exact setup is already on record (same signal and bar); wait for a new bar or a new signal')
     existing.extend(made)
     paper.save(existing, orders_path)
     paper._audit(sink, audit_path)

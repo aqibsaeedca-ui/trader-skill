@@ -324,3 +324,10 @@ class CreatePaper(unittest.TestCase):
     def test_oco_is_only_for_stop_pairs(self):
         with self.assertRaises(pi.paper.PaperError):
             self.make("BUY LIMIT", record(("buy_limit",)), oco=True)
+
+
+    def test_the_same_setup_cannot_be_recorded_twice(self):
+        self.make("BUY STOP", {}, acknowledge_unvalidated=True)
+        with self.assertRaises(pi.paper.PaperError):
+            self.make("BUY STOP", {}, acknowledge_unvalidated=True)
+        self.assertEqual(len(pp.load(self.op)), 1)

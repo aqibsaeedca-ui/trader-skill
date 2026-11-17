@@ -303,6 +303,7 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'pending' && d.code === 0) { try { return renderPending(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The pending orders could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'intel' && d.code === 0) { try { return renderIntel(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The dashboard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'goldnews' && d.code === 0) { try { return renderGoldNews(d); } catch (e) { console.error(e); } }
     if (d.view === 'backtest' && d.code === 0) { try { return renderBacktest(d); } catch (e) { console.error(e); } }
@@ -680,11 +681,13 @@ function renderResearch(d){
   const R = (v, dp = 2) => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(dp) + 'R';
   const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : 'n/a';
   const li = a => a.map(x => '<li>' + esc(x) + '</li>').join('');
-  const NAME = {breakout_retest: 'Breakout and retest', trend_continuation: 'Trend continuation', liquidity_sweep: 'Liquidity sweep reversal', range: 'Range trading'};
+  const NAME = {breakout_retest: 'Breakout and retest', trend_continuation: 'Trend continuation', liquidity_sweep: 'Liquidity sweep reversal', range: 'Range trading', buy_stop: 'BUY STOP (breakout)', sell_stop: 'SELL STOP (breakdown)', buy_limit: 'BUY LIMIT (pullback)', sell_limit: 'SELL LIMIT (pullback)'};
   const WHAT = {breakout_retest: 'Waits for price to break out of a tight range, then buys or sells the retest of the broken edge.',
     trend_continuation: 'Buys pullbacks in an up-trend (sells bounces in a down-trend) once the bigger chart agrees.',
     liquidity_sweep: 'Fades a fake-out: price grabs the stops above or below a level, snaps back, and the structure turns.',
-    range: 'Sells the top and buys the bottom of a sideways range, with a stop outside it.'};
+    range: 'Sells the top and buys the bottom of a sideways range, with a stop outside it.',
+    buy_stop: 'A resting order above price that fills only if a confirmed breakout continues upward.', sell_stop: 'A resting order below price that fills only if a confirmed breakdown continues downward.',
+    buy_limit: 'A resting order below price that waits for a pullback to a confirmed support level.', sell_limit: 'A resting order above price that waits for a bounce to a confirmed resistance level.'};
   const CHECK = {bootstrap_ci_lower_above_zero: 'The result is clearly above zero (95% band)', expectancy_positive: 'The average trade makes money after costs',
     positive_at_2x_costs: 'It still makes money if costs double', deflated_sharpe_ok: 'It survives the correction for trying many variations',
     both_halves_positive: 'Both halves of the history agree', holdout_big_enough: 'The final untouched test has enough trades',
@@ -737,6 +740,7 @@ function renderResearch(d){
     } else {
       body += '<div class="sub">The strategy took no trades in the test windows.</div>';
     }
+    if (s.orders && s.orders.submitted) { const q = s.orders, pc = x => x == null ? 'n/a' : Math.round(x * 100) + '%'; body += '<div class="sub" style="margin-top:6px"><b>Order behaviour:</b> ' + q.submitted + ' orders placed, ' + q.filled + ' filled (' + pc(q.fill_rate) + (q.fill_ci ? ', band ' + pc(q.fill_ci[0]) + ' to ' + pc(q.fill_ci[1]) : '') + '), ' + q.expired + ' expired, ' + q.cancelled + ' cancelled, ' + q.skipped + ' skipped. Of the filled orders ' + pc(q.target_hit_rate) + ' reached a target' + (q.target_hit_ci ? ' (band ' + pc(q.target_hit_ci[0]) + ' to ' + pc(q.target_hit_ci[1]) + ')' : '') + '. Average entry slippage ' + (q.avg_entry_slip == null ? 'n/a' : q.avg_entry_slip.toFixed(2)) + '.' + (q.enough ? '' : ' Too few orders to quote reliable rates.') + '</div>'; }
     body += '<div class="sub" style="margin-top:6px">Final untouched test: ' + (ho.n ? '<b>' + ho.n + '</b> trades, ' + R(ho.expectancy) : 'no trades') + '</div>';
     const checks = Object.entries(s.checks || {});
     body += '<ul class="rs-checks">' + (checks.length ? checks.map(([c, ok]) => '<li class="' + (ok ? 'ok' : 'no') + '">' + (ok ? '✓ ' : '✗ ') + esc(CHECK[c] || c.replace(/_/g, ' ')) + '</li>').join('') :
@@ -785,6 +789,113 @@ function renderResearch(d){
   $('#result').innerHTML = hero + how + '<div class="in-sec">The four strategies</div><div class="rs-grid">' + cards + '</div>' +
     (mlHtml ? '<div class="in-sec">Prediction model</div><div class="rs-grid">' + mlHtml + dataCard + '</div>' : '<div class="rs-grid">' + dataCard + '</div>') + next +
     '<div class="note">' + esc(g.note) + ' Not financial advice.</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 80000)) + '</pre></details>';
+}
+
+function renderPending(d){
+  const g = JSON.parse(d.stdout);
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const P = x => x == null ? 'n/a' : Math.round(x * 100) + '%';
+  const RR = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const when = t => t ? new Date(t * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'n/a';
+  const li = a => a.map(x => '<li>' + esc(x) + '</li>').join('');
+  const STATE = {RECOMMENDED: ['pass', 'Recommended'], CANDIDATE: ['wait', 'Candidate, blocked'], NONE: ['fail', 'No setup']};
+  const hero = g.headline === 'BEST'
+    ? '<div class="rs-hero some"><div class="big">Best validated setup: ' + esc(g.best.order_type) + '</div><div>Chosen by ' + esc(g.best.basis) + '. Validated means it held up on past data it had not seen. It is not a promise.</div></div>'
+    : '<div class="rs-hero none"><div class="big">NO VALID PENDING ORDER — WAIT FOR CONFIRMATION.</div><div>No order type has both a confirmed setup and out-of-sample evidence right now. Waiting is a position.</div></div>';
+  const m = g.market;
+  const meta = '<div class="rs-meta"><span class="chip">' + esc(g.symbol) + ' · ' + esc(g.interval) + '</span><span class="chip">price ' + N(m.price) + '</span><span class="chip">bid ' + N(m.bid) + ' / ask ' + N(m.ask) + '</span>' +
+    '<span class="chip">spread ' + N(m.spread) + ' (' + esc(m.spread_basis) + ')</span><span class="chip">regime: ' + esc(m.regime) + '</span><span class="chip">ATR ' + N(m.atr) + '</span><span class="chip">session: ' + esc(m.session) + '</span>' +
+    '<span class="chip">last closed bar ' + esc(m.last_closed_bar.replace('T', ' ').slice(0, 16)) + '</span><span class="chip">data: ' + esc(m.data_quality.provider) + ' (' + esc(m.data_quality.status) + ')</span></div>';
+  const prob = (e) => {
+    if (!e.fill_probability) return '<div class="sub">Fill chance and win chance after a fill: <b>not enough data</b>' + (e.no_probability_reason ? ' (' + esc(e.no_probability_reason) + ')' : '') + '. No percentage is shown rather than an uncalibrated one.</div>';
+    const f = e.fill_probability, h = e.hit_probability;
+    return '<div class="sub">Historical frequencies from past data, with 95% bands:</div><div class="rs-stats"><div><div class="k">Chance it fills</div><div class="v">' + P(f.p) + '</div><div class="sub">band ' + P(f.ci[0]) + ' to ' + P(f.ci[1]) + ', ' + f.n + ' orders</div></div>' +
+      '<div><div class="k">Wins after a fill</div><div class="v">' + P(h.p) + '</div><div class="sub">band ' + P(h.ci[0]) + ' to ' + P(h.ci[1]) + ', ' + h.n + ' fills</div></div>' +
+      '<div><div class="k">Per order placed</div><div class="v">' + RR(e.expected_per_submitted) + '</div></div></div>';
+  };
+  const cards = Object.entries(g.panels).map(([k, p]) => {
+    const s = STATE[p.status] || STATE.NONE, e = p.evidence, pl = p.plan;
+    let b = '<h4>' + esc(p.title) + '</h4><span class="rs-state ' + s[0] + '">' + s[1] + '</span> ' + (p.signal_state ? '<span class="chip">signal: ' + esc(p.signal_state) + '</span>' : '');
+    if (pl) {
+      b += '<table class="in-t"><tr><td>Order</td><td><b>' + esc(pl.order_type) + '</b> ' + esc(pl.symbol) + ' ' + esc(pl.direction) + '</td></tr>' +
+        '<tr><td>Entry</td><td>' + N(pl.entry) + '</td></tr><tr><td>Stop</td><td>' + N(pl.stop) + '</td></tr>' +
+        '<tr><td>Targets</td><td>' + N(pl.tp1) + ' · ' + N(pl.tp2) + ' · ' + N(pl.tp3) + '</td></tr>' +
+        '<tr><td>Size</td><td>' + N(pl.lots) + ' lots' + (pl.fits ? '' : ' (below the minimum lot: does not fit)') + '</td></tr>' +
+        '<tr><td>Risk if stopped</td><td>$' + N(pl.risk_currency) + '</td></tr>' +
+        '<tr><td>Net reward : risk</td><td>' + N(pl.rr_net) + ' (gross ' + N(pl.rr_gross) + ')</td></tr>' +
+        '<tr><td>Strategy / regime</td><td>' + esc(pl.strategy) + ' / ' + esc(pl.regime) + '</td></tr>' +
+        '<tr><td>Signal time</td><td>' + esc(when(pl.signal_ts)) + '</td></tr><tr><td>Expires</td><td>' + esc(when(pl.expires_at)) + ' (' + pl.expires_bars + ' bars)</td></tr></table>' +
+        '<div class="sub"><b>Invalid if:</b> ' + esc(pl.invalidation) + '</div>';
+      if ((pl.broker_errors || []).length) b += '<div class="sub"><b>Broker rules:</b></div><ul class="in-list">' + li(pl.broker_errors) + '</ul>';
+    } else {
+      b += '<div class="sub" style="margin-top:6px">No plan right now: ' + esc((p.info[0] || p.refusals[0] || 'no confirmed level close enough')) + '</div>';
+    }
+    b += '<div class="sub" style="margin-top:6px"><b>Evidence:</b> ' + esc(e.status) + '. ' + (e.oos_n || 0) + ' out-of-sample trades' + (e.expectancy != null ? ', average ' + RR(e.expectancy) : '') + (e.ci ? ' (band ' + RR(e.ci[0]) + ' to ' + RR(e.ci[1]) + ')' : '') + '.</div>' + prob(e);
+    if (e.orders && e.orders.submitted) b += '<div class="sub">History: ' + e.orders.submitted + ' orders placed, ' + e.orders.filled + ' filled, ' + e.orders.expired + ' expired, ' + e.orders.cancelled + ' cancelled. Average entry slippage ' + N(e.orders.avg_entry_slip) + '.</div>';
+    if (p.blocking.length) b += '<div class="sub"><b>Why not:</b></div><ul class="in-list">' + li(p.blocking) + '</ul>';
+    if (pl) b += '<div class="in-form"><button type="button" class="chip" data-act="mkpaper" data-t="' + esc(pl.order_type) + '" data-v="' + (e.validated ? 1 : 0) + '">Create paper order</button></div>';
+    return '<div class="rs-card">' + b + '</div>';
+  }).join('');
+  const cmp = '<table class="in-t"><tr><th>Order</th><th>Status</th><th>Entry</th><th>Stop</th><th>TP1</th><th>Lots</th><th>Risk $</th><th>Net R:R</th><th>Fill chance</th><th>Win after fill</th><th>Per order</th><th>OOS trades</th><th>Validation</th></tr>' +
+    g.comparison.map(r => '<tr><td>' + esc(r.order_type) + '</td><td>' + esc(r.status) + '</td><td>' + N(r.entry) + '</td><td>' + N(r.stop) + '</td><td>' + N(r.tp1) + '</td><td>' + N(r.lots) + '</td><td>' + N(r.risk, 0) + '</td><td>' + N(r.rr_net) + '</td><td>' + (r.fill ? P(r.fill.p) : 'n/a') + '</td><td>' + (r.hit ? P(r.hit.p) : 'n/a') + '</td><td>' + (r.ev == null ? 'n/a' : RR(r.ev)) + '</td><td>' + (r.oos_n || 0) + '</td><td>' + esc(r.validation) + '</td></tr>').join('') + '</table>';
+  const tfs = '<table class="in-t"><tr><th>Chart</th><th>Trend</th><th>Bias</th><th>Regime</th><th>Source</th></tr>' + m.timeframes.map(t => '<tr><td>' + esc(t.tf) + '</td><td>' + esc(t.trend) + '</td><td>' + esc(t.bias) + '</td><td>' + esc(t.regime) + '</td><td>' + esc(t.source) + '</td></tr>').join('') + '</table><div class="sub">' + esc(m.unavailable_note) + '</div>';
+  const a = g.account, rk = a.risk;
+  const acct = '<div class="rs-stats"><div><div class="k">Equity</div><div class="v">$' + N(a.equity, 0) + '</div><div class="sub">' + (a.equity_entered ? 'as you entered it' : 'DEFAULT, not entered') + '</div></div>' +
+    '<div><div class="k">Planned open risk</div><div class="v">$' + N(rk.planned_total, 0) + '</div><div class="sub">budget $' + N(rk.budget, 0) + '</div></div>' +
+    '<div><div class="k">Left in budget</div><div class="v">$' + N(rk.remaining, 0) + '</div><div class="sub">' + (rk.lockout ? 'DAILY LOCKOUT' : 'no lockout') + '</div></div></div>' +
+    (rk.reasons.length ? '<ul class="in-list">' + li(rk.reasons) + '</ul>' : '') +
+    (rk.scenarios || []).map(x => '<div class="sub">Scenario: ' + esc(x.label) + ' → worst case −$' + N(x.worst_case_loss, 0) + (x.covered_by_oco ? ' (one side cancels the other in the paper simulator)' : '') + '. ' + esc(x.note || '') + '</div>').join('') +
+    '<div class="sub">' + esc(a.note) + ' ' + esc(g.oco.note) + '</div>';
+  const pr = g.broker.profile, lm = g.broker.limits;
+  const field = (id, label, v) => '<label>' + label + '<input id="bp_' + id + '" value="' + esc(v) + '"></label>';
+  const brokerHtml = '<div class="note"><b>' + (g.broker.verified ? 'Broker profile saved.' : 'Placeholder broker values.') + '</b> ' + esc(g.broker.note) + ' ' + esc(g.stop_limit.note) + '</div>' +
+    '<div class="in-form">' + field('spread', 'Spread', pr.spread) + field('slippage', 'Slippage per side', pr.slippage) + field('commission_per_lot', 'Commission per lot', pr.commission_per_lot) + field('stops_level_points', 'Stops level (points)', pr.stops_level_points) +
+    field('tick_size', 'Tick size', pr.tick_size) + field('min_lot', 'Min lot', pr.min_lot) + field('lot_step', 'Lot step', pr.lot_step) + field('units_per_lot', 'Units per lot', pr.units_per_lot) + '</div>' +
+    '<div class="in-form">' + field('l_risk_pct', 'Risk per setup %', lm.risk_pct) + field('l_max_aggregate_risk_pct', 'Total planned risk %', lm.max_aggregate_risk_pct) + field('l_daily_loss_pct', 'Daily loss lockout %', lm.daily_loss_pct) + field('l_min_net_rr', 'Min net R:R', lm.min_net_rr) +
+    '<button type="button" class="run" data-act="bpsave">Save broker profile</button> <span class="sub" id="bpmsg"></span></div>';
+  $('#result').innerHTML = hero + meta + '<div class="in-sec">The four order types</div><div class="rs-grid">' + cards + '</div>' +
+    '<div class="in-sec">Comparison</div>' + cmp + '<div class="in-sec">Charts checked</div>' + tfs + '<div class="in-sec">Account-wide risk</div>' + acct +
+    '<div class="in-sec">Broker rules and limits</div>' + brokerHtml + '<div class="in-sec">Paper orders</div><div id="papers">loading…</div>' +
+    '<div class="note">' + g.notes.map(esc).join(' ') + ' Paper orders are a simulation: nothing is ever sent to a broker. Not financial advice.</div>' +
+    '<details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
+
+  const post = async (url, body) => {
+    const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'error');
+    return j;
+  };
+  const drawPapers = j => {
+    const s = j.summary;
+    $('#papers').innerHTML = '<div class="sub">' + s.total + ' paper orders: ' + s.waiting + ' waiting, ' + s.open + ' open, ' + s.closed + ' closed, total ' + RR(s.total_r) + '. ' + esc(j.broker_orders) + '.</div>' +
+      '<div class="in-form"><button type="button" class="chip" data-act="pupdate">Update against latest bars</button> <span class="sub" id="pmsg"></span></div>' +
+      (j.orders.length ? '<table class="in-t"><tr><th>ID</th><th>Order</th><th>Entry / stop</th><th>Evidence</th><th>Order state</th><th>Position</th><th>Result</th><th></th></tr>' + j.orders.map(o =>
+        '<tr><td style="word-break:break-all">' + esc(o.id) + '</td><td>' + esc(o.order_type) + (o.oco_group ? '<br><span class="sub">OCO ' + esc(o.oco_group) + '</span>' : '') + '</td><td>' + N(o.price) + ' / ' + N(o.stop) + '</td><td>' + esc(o.evidence_status || '') + '</td><td>' + esc(o.order_state.replace(/_/g, ' ')) + (o.reasons && o.reasons.length ? '<br><span class="sub">' + esc(o.reasons[0]) + '</span>' : '') + '</td><td>' + esc(o.position_state || '') + '</td><td>' + (o.r_result != null ? RR(o.r_result) : '–') + '</td><td>' +
+        (['AWAITING_TRIGGER', 'TRIGGERED', 'PARTIALLY_FILLED'].includes(o.order_state) ? '<button type="button" class="chip" data-act="pcancel" data-id="' + esc(o.id) + '">cancel</button>' : '') + '</td></tr>').join('') + '</table>' : '<div class="sub">No paper orders yet.</div>') +
+      (j.audit.length ? '<details class="raw"><summary>Audit trail (latest ' + j.audit.length + ')</summary><ul class="in-list">' + j.audit.map(x => '<li>' + esc((x.ts || '') + ' ' + x.order_id + ' ' + x.order_type + ': ' + x.from_state + ' → ' + x.to_state + '. ' + (x.note || '')) + '</li>').join('') + '</ul></details>' : '');
+  };
+  const loadPapers = () => fetch('/api/paper_orders').then(r => r.json()).then(drawPapers).catch(() => { $('#papers').textContent = 'Could not load paper orders.'; });
+  loadPapers();
+  $('#result').onclick = async ev => {
+    const b = ev.target.closest('[data-act]'); if (!b) return;
+    const act = b.dataset.act;
+    try {
+      if (act === 'mkpaper') {
+        const ack = b.dataset.v !== '1';
+        if (ack && !confirm('This order type has NOT passed out-of-sample validation. Create a research paper order anyway? It is a simulation; nothing is sent to a broker.')) return;
+        const j = await post('/api/paper_orders', {action: 'create', symbol: g.symbol, interval: g.interval, order_type: b.dataset.t, acknowledge_unvalidated: ack});
+        drawPapers(j); $('#papers').scrollIntoView({behavior: 'smooth'});
+      } else if (act === 'pupdate') { const j = await post('/api/paper_orders', {action: 'update', symbol: g.symbol, interval: g.interval}); drawPapers(j); }
+      else if (act === 'pcancel') { drawPapers(await post('/api/paper_orders', {action: 'cancel', id: b.dataset.id})); }
+      else if (act === 'bpsave') {
+        const v = id => parseFloat($('#bp_' + id).value);
+        const profile = Object.assign({}, pr, {spread: v('spread'), slippage: v('slippage'), commission_per_lot: v('commission_per_lot'), stops_level_points: v('stops_level_points'), tick_size: v('tick_size'), min_lot: v('min_lot'), lot_step: v('lot_step'), units_per_lot: v('units_per_lot'), verified: true});
+        const limits = Object.assign({}, lm, {risk_pct: v('l_risk_pct'), max_aggregate_risk_pct: v('l_max_aggregate_risk_pct'), daily_loss_pct: v('l_daily_loss_pct'), min_net_rr: v('l_min_net_rr')});
+        await post('/api/pending/settings', {settings: {profile, limits}});
+        $('#bpmsg').textContent = 'Saved. Run Pending order research again so costs and the minimum stop distance match.';
+      }
+    } catch (e) { const t = $(act === 'bpsave' ? '#bpmsg' : '#pmsg') || $('#papers'); t.textContent = 'Not done: ' + e.message; }
+  };
 }
 
 function renderIntel(d){
