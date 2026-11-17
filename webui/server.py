@@ -66,6 +66,10 @@ COMMANDS = [
          help="Every trade plan the console recommends, for Gold and Bitcoin, is recorded when shown and graded later against what price actually did, "
               "whether or not you took it: would it have won, lost, or never triggered. Shows the right/wrong record with honest bands.",
          script="webui/scorecard.py", fixed=["--json"], view="scorecard", params=[]),
+    dict(id="profit", group="Gold", title="Gold profitability intelligence",
+         help="One dashboard in eight sections (strategy health, loss diagnostics, signal quality, opportunity ranking, execution quality, profitability comparison, capital protection, "
+              "optimisation history) built from the saved results of every earlier test. It runs no new experiment, and every figure is labelled historical backtest or live record.",
+         script="webui/profitability.py", fixed=["--json"], view="profit", params=[]),
     dict(id="experiments3", group="Gold", title="Session, news and machine-learning filter experiments",
          help="The pre-registered Phase 10 to 12 tests: session and news filters, a purged machine-learning trade filter, an event-driven order-lifecycle backtester checked against the grader, "
               "and a replay of the risk limits. Historical backtest only. Shows the saved result; tick re-run for fresh data.",

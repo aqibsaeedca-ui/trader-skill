@@ -303,7 +303,8 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
-    if (d.view === 'experiments3' && d.code === 0) { try { return renderExperiments3(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'profit' && d.code === 0) { try { return renderProfit(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The dashboard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+  if (d.view === 'experiments3' && d.code === 0) { try { return renderExperiments3(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
   if (d.view === 'experiments2' && d.code === 0) { try { return renderExperiments2(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'experiments' && d.code === 0) { try { return renderExperiments(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'lossattr' && d.code === 0) { try { return renderLossAttribution(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The loss attribution could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
@@ -844,6 +845,62 @@ function renderExperiments2(d){
       $('#strictmsg').textContent = j.strict ? 'Strict mode is ON: recommendations are allowed only for strategies graded A.' : 'Strict mode is off: baseline behaviour.';
     } catch (e) { $('#strictmsg').textContent = 'Not saved: ' + e.message; }
   };
+}
+
+function renderProfit(d){
+  const g = JSON.parse(d.stdout);
+  const R = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const P = v => v == null ? 'n/a' : Math.round(v * 100) + '%';
+  const band = b => b ? ' <span class="sub">band ' + R(b[0]) + ' to ' + R(b[1]) + '</span>' : '';
+  const tag = s => '<span class="chip">' + esc(s) + '</span>';
+  const dcls = {ADOPTED: 'pass', REJECTED: 'fail', 'INSUFFICIENT SAMPLE': 'wait', BASELINE: 'wait', 'NOT DEMONSTRATED': 'wait'};
+  const vcls = {LOSING: 'fail', PROFITABLE: 'pass', INCONCLUSIVE: 'wait', UNKNOWN: 'wait'};
+  const gcls = {A: 'pass', B: 'wait', C: 'wait', 'NO TRADE': 'fail'};
+  const A = g.A, h = A.headline;
+  const sec = {};
+  sec.A = '<div class="rs-hero ' + (A.verdict === 'PROFITABLE' ? 'some' : 'none') + '"><div class="big">' + esc(A.verdict) + ': ' + esc(A.verdict_reason) + '</div><div>The unfiltered strategy on the held-out test period averaged ' + R(h.test_mean_r) + ' per trade over ' + h.test_trades + ' trades' + band(h.test_band) +
+    '. Profit factor ' + N(h.profit_factor) + ', worst drawdown ' + N(h.max_drawdown_r, 1) + 'R. ' + (A.improvements_adopted.length ? 'Adopted improvements: ' + A.improvements_adopted.map(esc).join('; ') + '.' : 'No tested improvement has been adopted: every filter, stop, exit, entry mode and model was rejected or lacked a sample.') + '</div><div class="rs-meta">' + tag('historical backtest') + tag(A.hypotheses_tested + ' ideas tested') + tag(A.strict_mode ? 'strict mode ON' : 'strict mode off') + '</div></div>' +
+    '<table class="in-t"><tr><th>Measure</th><th>Value</th><th>Source</th></tr>' +
+    '<tr><td>Whole replay, Gold and Bitcoin, every recommendation</td><td>' + R(h.replay_mean_r) + ' over ' + h.replay_completed + ' completed</td><td>historical backtest</td></tr>' +
+    '<tr><td>Whole replay, repeated ideas counted once</td><td>' + R(h.replay_dedup_mean_r) + ' over ' + h.replay_dedup_completed + ' completed</td><td>historical backtest</td></tr>' +
+    (A.gold ? '<tr><td>Whole replay, Gold only (not separately pre-registered)</td><td>' + R(A.gold.mean_r) + ' over ' + A.gold.completed + ' completed; win rate ' + P(A.gold.win_rate) + '</td><td>historical backtest</td></tr>' : '') +
+    '<tr><td>Live record under the current grader</td><td>' + A.live.wins + ' wins, ' + A.live.losses + ' losses, ' + A.live.open + ' still open; ' + R(A.live.mean_r) + ' average' + (A.live.enough ? '' : ' (too few to conclude)') + '</td><td>live record</td></tr>' +
+    '<tr><td>Forward simulation</td><td>' + esc(g.forward_simulation) + '</td><td>forward simulation</td></tr></table>';
+  const B = g.B;
+  sec.B = '<div class="sub">' + tag('historical backtest') + ' ' + B.losses + ' losing trades in the replay.</div><table class="in-t"><tr><th>Cause with recorded evidence</th><th>Losses it appears in</th><th>Share</th></tr>' +
+    B.causes.map(c => '<tr><td>' + esc(c.label) + '</td><td>' + c.supported + '</td><td>' + P(c.share) + '</td></tr>').join('') + '</table><div class="sub">' + esc(B.note) + '</div>' +
+    (B.fill_gap ? '<div class="note">Breakout fills: ' + B.fill_gap.breakout_fills + ' fills, average ' + N(B.fill_gap.mean, 1) + ' price units worse than the planned entry (a breakout waits for a close, then fills at the next open).</div>' : '') +
+    (B.audit ? '<div class="note">Simulator audit: ' + B.audit.failed + ' failures in ' + B.audit.checked + ' filled trades.</div>' : '');
+  const C = g.C, sv = C.score_vs_grade || {by_grade: {}};
+  sec.C = '<div class="sub">' + tag('historical backtest') + '</div><table class="in-t"><tr><th>Strategy</th><th>Evidence grade</th><th>Test trades / avg</th></tr>' +
+    C.strategies.map(s => '<tr><td>' + esc(s.name) + '</td><td><span class="rs-state ' + (gcls[s.grade] || 'wait') + '">' + esc(s.grade) + '</span><div class="sub">' + esc(s.grade_reason) + '</div></td><td>' + s.test.trades + ' / ' + R(s.test.mean_r) + '</td></tr>').join('') + '</table>' +
+    '<table class="in-t"><tr><th>Score grade given to the plan</th><th>Test trades</th><th>Average result</th></tr>' + Object.entries(sv.by_grade).map(([k, v]) => '<tr><td>' + esc(k) + '</td><td>' + v.trades + '</td><td>' + R(v.mean_r) + '</td></tr>').join('') + '</table>' +
+    '<div class="note">Machine-learning filter: test AUC ' + N(C.ml.test_auc, 3) + ', Brier skill ' + N(C.ml.brier_skill, 3) + '. Probabilities: ' + esc(C.ml.probability_status) + '. ' + esc(C.note) + '</div>';
+  const D = g.D;
+  sec.D = '<div class="sub">' + tag('historical backtest') + '</div><table class="in-t"><tr><th>#</th><th>Strategy</th><th>Test avg</th><th>Test trades</th><th>Earlier period avg</th><th>Verdict</th><th>Evidence grade</th></tr>' +
+    D.ranking.map((r, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(r.name) + '</td><td>' + R(r.test_mean_r) + band(r.band) + '</td><td>' + r.test_trades + '</td><td>' + R(r.train_mean_r) + (r.stable ? '' : ' <span class="sub">sign differs: unstable</span>') + '</td><td><span class="rs-state ' + (vcls[r.verdict] || 'wait') + '">' + esc(r.verdict) + '</span></td><td>' + esc(r.evidence_grade) + '</td></tr>').join('') + '</table><div class="note">' + esc(D.note) + '</div>';
+  const E = g.E, ct = E.counts || {};
+  sec.E = '<div class="sub">' + tag('historical backtest') + '</div><table class="in-t"><tr><th>Outcome of ' + (ct.recommendations || 0) + ' recommendations</th><th>Count</th><th>Share</th></tr>' +
+    '<tr><td>Triggered (filled)</td><td>' + ct.triggered + '</td><td>' + P(E.rates.triggered) + '</td></tr><tr><td>Never triggered</td><td>' + ct.not_triggered + '</td><td>' + P(E.rates.not_triggered) + '</td></tr><tr><td>Invalidated before entry</td><td>' + ct.invalidated + '</td><td>' + P(E.rates.invalidated) + '</td></tr></table>' +
+    '<div class="note">Simulator and grader agreement (event-driven check): ' + P(E.engine.agreement) + ' of ' + E.engine.compared + ' plans. Executed on a broker: ' + E.executed_on_a_broker + '. Winners\' median adverse excursion: ' + N(((E.mae || {}).winners || {}).p50) + 'R.</div>' +
+    '<div class="note"><b>Unknown, not estimated:</b> ' + E.unknown.map(esc).join('; ') + '.</div>';
+  const F = g.F;
+  sec.F = '<div class="sub">' + tag('historical backtest') + ' ' + F.positive + ' of ' + F.total + ' variants had a positive test average. ' + esc(F.note) + '</div><table class="in-t"><tr><th></th><th>Variant</th><th>Group</th><th>Test trades</th><th>Test avg</th><th>Earlier avg</th><th>Drawdown</th><th>Decision</th></tr>' +
+    F.rows.map(r => '<tr><td><b>' + esc(r.id) + '</b></td><td>' + esc(r.name) + '</td><td>' + esc(r.group) + '</td><td>' + (r.test_trades == null ? '' : r.test_trades) + '</td><td>' + R(r.test_mean_r) + band(r.band) + '</td><td>' + R(r.train_mean_r) + '</td><td>' + N(r.max_drawdown_r, 1) + 'R</td><td><span class="rs-state ' + (dcls[r.decision] || 'wait') + '">' + esc(r.decision) + '</span></td></tr>').join('') + '</table>';
+  const G = g.G, gt = G.gate, dd = G.dedup;
+  sec.G = '<div class="sub">' + tag('historical backtest') + ' ' + tag(G.strict_mode ? 'strict mode ON' : 'strict mode off') + '</div><ul>' + G.controls.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul>' +
+    (gt ? '<table class="in-t"><tr><th>Test period</th><th>Trades</th><th>Total net</th><th>Worst drawdown</th></tr><tr><td>No limits</td><td>' + gt.candidates + '</td><td>' + R(gt.ungated_total_r) + '</td><td></td></tr><tr><td>With the risk limits</td><td>' + gt.taken + '</td><td>' + R(gt.total_r) + ' (' + N(gt.total_pct, 1) + '% of equity)</td><td>' + N(gt.max_drawdown_r, 1) + 'R (' + N(gt.max_drawdown_pct, 1) + '%)</td></tr></table>' : '') +
+    (dd ? '<div class="note">Repeated ideas counted once cut peak simultaneous open risk from ' + dd.every_recommendation.peak_concurrent_r + 'R to ' + dd.first_of_each_opportunity.peak_concurrent_r + 'R on the test period, and worst drawdown from ' + N(dd.every_recommendation.max_drawdown_r, 0) + 'R to ' + N(dd.first_of_each_opportunity.max_drawdown_r, 0) + 'R.</div>' : '') + '<div class="note">' + esc(G.note) + '</div>';
+  const H = g.H;
+  sec.H = '<div class="sub">' + tag('historical backtest') + ' ' + H.runs + ' logged runs, ' + H.total_logged + ' ideas: ' + H.adopted + ' adopted, ' + H.rejected + ' rejected, ' + H.insufficient + ' insufficient sample. ' + esc(H.note) + '</div><table class="in-t"><tr><th>Run (UTC)</th><th>Idea</th><th>Test trades</th><th>Test avg</th><th>Decision</th></tr>' +
+    H.entries.map(e => '<tr><td>' + esc(String(e.run).replace('T', ' ').slice(0, 16)) + '</td><td><b>' + esc(e.id) + '</b> ' + esc(e.name) + '</td><td>' + (e.test_trades == null ? '' : e.test_trades) + '</td><td>' + R(e.test_mean_r) + '</td><td><span class="rs-state ' + (dcls[e.decision] || 'wait') + '">' + esc(e.decision) + '</span></td></tr>').join('') + '</table>';
+  const order = [['A', g.A.title], ['B', g.B.title], ['C', g.C.title], ['D', g.D.title], ['E', g.E.title], ['F', g.F.title], ['G', g.G.title], ['H', g.H.title]];
+  const miss = g.missing.length ? '<div class="note err">Some saved results are missing, so parts below are empty. ' + esc(g.note) + '</div>' : '';
+  $('#result').innerHTML = miss + '<div class="rs-meta" id="ptabs">' + order.map(([k, t]) => '<button type="button" class="chip" data-k="' + k + '">' + k + '. ' + esc(t) + '</button>').join(' ') + '</div><div id="psec"></div><div class="note">' + esc(g.caution) + '</div>';
+  const show = k => { $('#psec').innerHTML = '<div class="in-sec">' + k + '. ' + esc(g[k].title) + '</div>' + sec[k]; document.querySelectorAll('#ptabs button').forEach(b => { b.style.fontWeight = b.dataset.k === k ? '700' : '400'; }); };
+  document.querySelectorAll('#ptabs button').forEach(b => { b.onclick = () => show(b.dataset.k); });
+  show('A');
 }
 
 function renderExperiments3(d){
