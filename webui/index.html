@@ -17,6 +17,12 @@ h1{font-size:16px;margin:0}
 .wrap{display:grid;grid-template-columns:230px 1fr;min-height:calc(100vh - 56px)}
 nav{border-right:1px solid var(--line);padding:10px;background:var(--panel);overflow:auto}
 nav h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:14px 6px 4px}
+nav details.ng{margin:0}
+nav details.ng summary{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:10px 6px 2px;cursor:pointer;list-style:none;user-select:none}
+nav details.ng summary::-webkit-details-marker{display:none}
+nav details.ng summary::before{content:"\25B8";display:inline-block;width:12px}
+nav details.ng[open] summary::before{content:"\25BE"}
+nav details.ng summary .n{font-weight:400;opacity:.6}
 nav button{display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);padding:7px 8px;border-radius:6px;cursor:pointer;font:inherit}
 nav button:hover{background:var(--bg)}
 nav button.on{background:var(--accent);color:var(--accent-ink)}
@@ -226,7 +232,7 @@ td.hot{background:rgba(11,107,79,.14);font-weight:600}
 @media (max-width:760px){.rb{grid-template-columns:1fr}.heat{grid-template-columns:70px repeat(3,1fr)}}
 @media (max-width:760px){.lad{grid-template-columns:1fr 60px 60px}.lad .sig{grid-column:1/-1}}
 .files button{margin:0 6px 6px 0;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
-@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px}nav h2{width:100%;margin:6px 4px 0}nav button{width:auto}.ua input{width:100%}}
+@media (max-width:760px){.wrap{grid-template-columns:1fr}nav{border-right:0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px}nav h2{width:100%;margin:6px 4px 0}nav details.ng{width:100%}nav button{width:auto}.ua input{width:100%}}
 </style>
 </head>
 <body>
@@ -253,11 +259,12 @@ async function init(){
   $('#meta').textContent = 'Python ' + d.python + ' · running from ' + d.root + ' · no order is ever placed from here';
   const groups = {};
   commands.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
+  const openByDefault = ['Gold', 'Bitcoin'];
   $('#nav').innerHTML = Object.entries(groups).map(([g, cs]) =>
-    '<h2>' + esc(g) + '</h2>' + cs.map(c => '<button data-id="' + c.id + '">' + esc(c.title) + '</button>').join('') +
+    '<details class="ng"' + (openByDefault.includes(g) ? ' open' : '') + '><summary>' + esc(g) + ' <span class="n">' + (cs.length + (g === 'Gold' || g === 'Bitcoin' ? 1 : 0)) + '</span></summary>' + cs.map(c => '<button data-id="' + c.id + '">' + esc(c.title) + '</button>').join('') +
     (g === 'Gold' ? '<button data-id="_alerts">Gold alerts</button>' : '') +
-    (g === 'Bitcoin' ? '<button data-id="_btc_alerts">Bitcoin alerts</button>' : '')).join('')
-    + '<h2>Data</h2><button data-id="_files">trader/ files</button>';
+    (g === 'Bitcoin' ? '<button data-id="_btc_alerts">Bitcoin alerts</button>' : '') + '</details>').join('')
+    + '<details class="ng"><summary>Data</summary><button data-id="_files">trader/ files</button></details>';
   $('#nav').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.id); });
   show(location.hash.slice(1) || commands[0].id);
 }
@@ -274,7 +281,7 @@ function field(p){
 }
 
 function show(id){
-  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.id === id));
+  document.querySelectorAll('nav button').forEach(b => { const on = b.dataset.id === id; b.classList.toggle('on', on); if (on && b.parentElement.tagName === 'DETAILS') b.parentElement.open = true; });
   history.replaceState(null, '', '#' + id);
   if (alertTimer) { clearInterval(alertTimer); alertTimer = null; }
   if (id === '_alerts') return showAlerts('gold');

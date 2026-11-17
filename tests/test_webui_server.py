@@ -48,8 +48,10 @@ class Commands(unittest.TestCase):
         for cid in ("intel", "research", "macro-show", "macro-update", "macro-study", "data-check", "gold", "gold-backtest", "gold-news", "btc", "btc-news"):
             self.assertIn(cid, by)
             self.assertTrue(os.path.exists(os.path.join(ROOT, by[cid]["script"])), cid)
-        for cid in ("intel", "research", "macro-show", "macro-update", "macro-study"):
-            self.assertEqual(by[cid]["group"], "Gold")
+        for cid in ("intel", "macro-show", "scorecard", "profit", "pending"):
+            self.assertEqual(by[cid]["group"], "Gold")                   # the essential tabs
+        for cid in ("research", "macro-update", "macro-study", "experiments", "experiments2", "experiments3", "lossattr", "recbacktest"):
+            self.assertEqual(by[cid]["group"], "Gold lab")               # research and experiments live in the collapsed group
         self.assertEqual(by["intel"]["view"], "intel")
         self.assertEqual(by["research"]["view"], "research")
         self.assertIn("--json", by["research"]["fixed"])                  # the page needs the structured record

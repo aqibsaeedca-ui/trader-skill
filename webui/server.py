@@ -70,26 +70,26 @@ COMMANDS = [
          help="One dashboard in eight sections (strategy health, loss diagnostics, signal quality, opportunity ranking, execution quality, profitability comparison, capital protection, "
               "optimisation history) built from the saved results of every earlier test. It runs no new experiment, and every figure is labelled historical backtest or live record.",
          script="webui/profitability.py", fixed=["--json"], view="profit", params=[]),
-    dict(id="experiments3", group="Gold", title="Session, news and machine-learning filter experiments",
+    dict(id="experiments3", group="Gold lab", title="Session, news and machine-learning filter experiments",
          help="The pre-registered Phase 10 to 12 tests: session and news filters, a purged machine-learning trade filter, an event-driven order-lifecycle backtester checked against the grader, "
               "and a replay of the risk limits. Historical backtest only. Shows the saved result; tick re-run for fresh data.",
          script="webui/experiments3.py", fixed=["--json"], view="experiments3",
          params=[P("rerun", "Recompute with the latest data (about 60 seconds)", "check", flag="--rerun")]),
-    dict(id="experiments2", group="Gold", title="Stops, grading and strict mode experiments",
+    dict(id="experiments2", group="Gold lab", title="Stops, grading and strict mode experiments",
          help="The pre-registered Phase 6 to 9 tests: stop and exit variants, whether the A/B/C score predicts results, the evidence grade of each strategy, what de-duplicating repeated "
               "ideas changes, and strict mode versus baseline mode. Shows the saved result; tick re-run for fresh data. Strict mode can be switched on or off on the page.",
          script="webui/experiments2.py", fixed=["--json"], view="experiments2",
          params=[P("rerun", "Recompute with the latest data (about 40 seconds)", "check", flag="--rerun")]),
-    dict(id="experiments", group="Gold", title="Regime, trend and breakout experiments",
+    dict(id="experiments", group="Gold lab", title="Regime, trend and breakout experiments",
          help="The pre-registered Phase 3 to 5 tests: a nine-class regime classifier with ablation, a higher-timeframe trend filter, a confirmed-reversal filter, and breakout entry modes "
               "and false-breakout filters, each judged once on a held-out test period. Shows the saved result. Run 'Backtest every recommendation' first if you want fresh data, then tick re-run.",
          script="webui/experiments.py", fixed=["--json"], view="experiments",
          params=[P("rerun", "Recompute with the latest data (about 30 seconds)", "check", flag="--rerun")]),
-    dict(id="lossattr", group="Gold", title="Loss attribution report",
+    dict(id="lossattr", group="Gold lab", title="Loss attribution report",
          help="What happened to every recommendation and why the losing ones lost. A cause is shown only when recorded evidence supports it, otherwise it is marked unknown. "
               "Separates recommendations from simulated fills and open positions, counts repeated ideas once, and audits the simulator's own arithmetic.",
          script="webui/loss_attribution.py", fixed=["--json"], view="lossattr", params=[]),
-    dict(id="recbacktest", group="Gold", title="Backtest every recommendation",
+    dict(id="recbacktest", group="Gold lab", title="Backtest every recommendation",
          help="Replays history hour by hour: at each point the Gold and Bitcoin analysis is rebuilt from only the bars that existed then, every plan the page would have ranked "
               "in its top three is recorded, and each is graded win, loss or never triggered with conservative fills and costs. Takes about 45 seconds. Nothing is tuned on the result.",
          script="webui/recommendation_backtest.py", fixed=["--json"], view="scorecard", params=[]),
@@ -99,7 +99,7 @@ COMMANDS = [
          script="webui/pending.py", fixed=["--json"], view="pending",
          params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
                  P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m"])]),
-    dict(id="research-pending", group="Gold", title="Pending order research",
+    dict(id="research-pending", group="Gold lab", title="Pending order research",
          help="Walk-forward test of BUY STOP, SELL STOP, BUY LIMIT and SELL LIMIT with an untouched holdout, fill rates, expiries and cost stress. "
               "Uses your saved broker profile for costs and the minimum stop distance. Takes about 10 seconds.",
          script="webui/research.py", fixed=["run", "--family", "pending", "--json"], view="research",
@@ -107,7 +107,7 @@ COMMANDS = [
                  P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m"]),
                  P("spread", "Spread (price units, blank = profile)", "number", "", "--spread"),
                  P("slippage", "Slippage per side (price units)", "number", "", "--slippage")]),
-    dict(id="research", group="Gold", title="Gold research run",
+    dict(id="research", group="Gold lab", title="Gold research run",
          help="Walk-forward test of the four strategies with a final untouched holdout, cost stress, news-filter test and a calibrated "
               "model, saved as a reproducible record. Costs are placeholders unless you enter your broker's. Takes about 10 seconds.",
          script="webui/research.py", fixed=["run", "--json"], view="research",
@@ -121,11 +121,11 @@ COMMANDS = [
          help="The stored calendar with where each date came from and how reliable it is. FOMC dates are official, NFP dates are derived "
               "from the BLS rule, anything else comes from your own CSV.",
          script="webui/macro.py", fixed=["show"], params=[]),
-    dict(id="macro-update", group="Gold", title="Update economic events",
+    dict(id="macro-update", group="Gold lab", title="Update economic events",
          help="One request to federalreserve.gov for FOMC dates, plus derived NFP dates marked as derived. BLS blocks automated downloads, "
               "so CPI and PCE need your own CSV (macro.py import-csv).",
          script="webui/macro.py", fixed=["update"], params=[]),
-    dict(id="macro-study", group="Gold", title="Event reactions",
+    dict(id="macro-study", group="Gold lab", title="Event reactions",
          help="How gold actually behaved after past releases, against how it behaves on any bar. Observed behaviour only, not cause.",
          script="webui/macro.py", fixed=["study"],
          params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F"]),
@@ -141,7 +141,7 @@ COMMANDS = [
                  P("risk", "Risk per trade (%)", "number", "1", "--risk-pct"),
                  P("stop", "Stop distance ($/oz, blank = ATR based)", "number", "", "--stop"),
                  P("atr", "ATR multiple for the stop", "number", "2", "--atr-mult")]),
-    dict(id="gold-backtest", group="Gold", title="Gold backtest",
+    dict(id="gold-backtest", group="Gold lab", title="Gold backtest",
          help="Replays the short-term setups day by day on past gold prices (no look-ahead) and shows win rate, "
               "average R, stability and a no-zone baseline. Takes a few seconds.",
          script="webui/gold_backtest.py", fixed=["--json"], view="backtest",
@@ -150,7 +150,7 @@ COMMANDS = [
                  P("window", "Order stays working (bars)", "number", "10", "--window"),
                  P("hold", "Max bars held", "number", "20", "--hold"),
                  P("cost", "Cost ($/oz round trip)", "number", "0.5", "--cost")]),
-    dict(id="data-check", group="Gold", title="Data quality check",
+    dict(id="data-check", group="Gold lab", title="Data quality check",
          help="Fetches one series from Yahoo and reports duplicates, missing bars, bad candles, staleness, whether the "
               "latest bar is still forming, and a provenance hash. Read-only; nothing is interpolated.",
          script="webui/marketdata.py", fixed=["check"],
