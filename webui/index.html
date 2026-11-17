@@ -807,6 +807,17 @@ function renderScorecard(d){
       'Plans are recorded each time you open the Gold or Bitcoin assessment and while the watcher runs. Each one is graded later against what price actually did, whether or not you took it. Come back after some time has passed.') + '</div>' +
     '<div class="rs-meta"><span class="chip">' + A.total + ' recorded</span><span class="chip">' + A.triggered + ' triggered</span><span class="chip">' + c['NOT TRIGGERED'] + ' never triggered</span><span class="chip">' + c.INVALIDATED + ' invalidated</span><span class="chip">' + (c.OPEN + c.WAITING) + ' still live</span>' +
     (g.added ? '<span class="chip">' + g.added + ' new this refresh</span>' : '') + '<span class="chip">checked ' + esc(when(g.checked)) + '</span></div></div>';
+  const rep = g.kind === 'replay';
+  let hero2 = hero;
+  if (rep) {
+    const cv = (g.coverage || []).map(x => esc(x.symbol) + ': ' + x.decision_points + ' decision points, ' + esc(when(x.first)) + ' to ' + esc(when(x.last))).join(' · ');
+    hero2 = '<div class="rs-hero ' + (A.mean_r > 0 ? 'some' : 'none') + '"><div class="big">Backtest of every recommendation: ' + c.WIN + ' right, ' + c.LOSS + ' wrong' + (A.win_rate != null ? ' (' + P(A.win_rate) + ' reached target 1 before the stop)' : '') + '</div><div>' +
+      A.total.toLocaleString('en-US') + ' recommendations were replayed through history exactly as the page would have shown them, and ' + A.triggered.toLocaleString('en-US') + ' of them triggered. Average result per triggered plan after costs: <b>' + R(A.mean_r) + '</b>' +
+      (A.mean_r != null && A.mean_r <= 0 ? ', which means that taken as a whole these recommendations lost money in this period.' : '.') + ' Compare the groups below: they show which kinds of recommendation held up and which did not.</div><div class="rs-meta"><span class="chip">' + cv + '</span></div></div>';
+  } else if (g.replay) {
+    const a = g.replay.summary.all;
+    hero2 = hero + '<div class="note"><b>Historical backtest of every recommendation</b> (' + esc(when(g.replay.checked)) + '): ' + a.counts.WIN + ' right, ' + a.counts.LOSS + ' wrong across ' + a.total.toLocaleString('en-US') + ' replayed recommendations, average ' + R(a.mean_r) + ' per triggered plan after costs. Run <b>Backtest every recommendation</b> to refresh it and see the full breakdown.</div>';
+  }
   const how = '<div class="note"><b>How this is scored.</b> ' + esc(g.method) + '</div>';
   const grp = (title, key, nm) => {
     const rows = Object.entries(g.summary.by[key] || {}).map(([k, a]) => '<tr><td>' + esc(nm ? nm(k) : k) + '</td><td>' + a.total + '</td><td>' + a.counts.WIN + ' / ' + a.counts.LOSS + '</td><td>' + (a.win_rate == null ? 'n/a' : P(a.win_rate) + (a.win_ci ? ' <span class="sub">(' + P(a.win_ci[0]) + ' to ' + P(a.win_ci[1]) + ')</span>' : '')) + '</td><td>' + R(a.mean_r) + '</td><td>' + a.counts['NOT TRIGGERED'] + '</td></tr>').join('');
@@ -815,7 +826,7 @@ function renderScorecard(d){
   const tfn = {'15m': '15 minute', '1h': '1 hour', '4h': '4 hour', daily: 'Daily', weekly: 'Weekly'};
   const rows = g.rows.map(r => '<tr><td>' + esc(when(r.created)) + '</td><td>' + esc(r.symbol) + ' · ' + esc(tfn[r.tf] || r.tf) + '</td><td>' + esc(r.name) + (r.grade ? ' <span class="chip">grade ' + esc(r.grade) + '</span>' : '') + '</td><td>' + r.entry.toFixed(2) + ' / ' + r.stop.toFixed(2) + ' / ' + r.targets[0].toFixed(2) + '</td>' +
     '<td><span class="rs-state ' + (cls[r.state] || 'wait') + '">' + esc(label[r.state] || r.state) + '</span></td><td>' + R(r.r_net) + '</td><td class="sub">' + esc(r.story) + '</td></tr>').join('');
-  $('#result').innerHTML = hero + how + (g.errors.length ? '<div class="note"><b>Data problem:</b> ' + esc(g.errors.join('; ')) + '</div>' : '') +
+  $('#result').innerHTML = hero2 + how + (g.errors.length ? '<div class="note"><b>Data problem:</b> ' + esc(g.errors.join('; ')) + '</div>' : '') +
     '<div class="in-sec">Every recommendation, newest first</div>' + (rows ? '<table class="in-t"><tr><th>Recommended</th><th>Market</th><th>Plan</th><th>Entry / stop / target 1</th><th>Verdict</th><th>Result</th><th>What happened</th></tr>' + rows + '</table>' : '<div class="sub">Nothing recorded yet. Open Gold assessment or Bitcoin assessment once and come back.</div>') +
     '<div class="in-sec">Right and wrong ratios</div><div class="rs-grid">' + grp('By market', 'symbol') + grp('By chart', 'tf', k => tfn[k] || k) + grp('By setup type', 'kind', k => k === 'pullback' ? 'Pullback (limit order)' : 'Breakout (needs a closing candle)') + grp('By direction', 'side', k => k === 'long' ? 'Long' : 'Short') + grp('By grade the plan was given', 'grade') + '</div>' +
     '<div class="note">' + esc(g.caution) + '</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';

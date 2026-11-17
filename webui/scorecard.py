@@ -98,9 +98,14 @@ def make_record(symbol, tf, plan, created_ts, source="assessment"):
                 why=list(plan.get("why") or [])[:4], source=source, result=None)
 
 
-def record(recs, symbol, tf, plans, created_ts, max_rank=3, source="assessment"):
-    """Add the plans that were shown (rank 1..max_rank). A plan already recorded and still alive, or recorded within its own expiry, is not added twice."""
+def record(recs, symbol, tf, plans, created_ts, max_rank=3, source="assessment", index=None):
+    """Add the plans that were shown (rank 1..max_rank). A plan already recorded and still alive, or recorded within its own expiry, is not added twice.
+    `index` (key -> records) lets a long replay avoid rescanning every record; it is kept up to date here."""
     added = []
+    if index is None:
+        index = {}
+        for o in recs:
+            index.setdefault(o["key"], []).append(o)
     for p in plans or []:
         if (p.get("rank") or 99) > max_rank:
             continue
@@ -108,10 +113,11 @@ def record(recs, symbol, tf, plans, created_ts, max_rank=3, source="assessment")
         if r is None:
             continue
         window = STEP[r["tf"]] * r["expiry_bars"]
-        dup = [o for o in recs if o["key"] == r["key"] and (created_ts - o["created_ts"] < window or not (o.get("result") or {}).get("final"))]
+        dup = [o for o in index.get(r["key"], ()) if created_ts - o["created_ts"] < window or not (o.get("result") or {}).get("final")]
         if dup:
             continue
         recs.append(r)
+        index.setdefault(r["key"], []).append(r)
         added.append(r)
     return added
 
@@ -361,7 +367,17 @@ def snapshot(symbols=("GC=F", "BTC-USD"), now=None, path=None, analyse=None):
         bars[s] = bars_from_res(res)
     changed = grade_all(recs, bars, now)
     save(recs, path)
-    return document(recs, now, added, len(changed), errors)
+    return document(recs, now, added, len(changed), errors, _replay_summary())
+
+
+def _replay_summary():
+    """The saved historical backtest, if one has been run (slimmed down for the page)."""
+    try:
+        import recommendation_backtest as rb
+        d = rb.load_doc()
+    except Exception:
+        return None
+    return dict(checked=d["checked"], summary=dict(all=d["summary"]["all"])) if d else None
 
 
 def record_from_res_into(recs, res, symbol, now):
@@ -373,8 +389,8 @@ def record_from_res_into(recs, res, symbol, now):
     return added
 
 
-def document(recs, now, added=0, changed=0, errors=()):
-    return dict(checked=_iso(now), summary=summary(recs), rows=view(recs), added=added, changed=changed, errors=list(errors),
+def document(recs, now, added=0, changed=0, errors=(), replay=None):
+    return dict(replay=replay,checked=_iso(now), summary=summary(recs), rows=view(recs), added=added, changed=changed, errors=list(errors),
                 method=("Every recommended plan is recorded when shown and graded later against closed bars, whether or not you traded it. "
                         "Limit entries need a tick of penetration, breakouts enter at the next open after a confirming close, a stop wins any same-bar tie, "
                         "gaps exit at the open, the 50/30/20 split with a breakeven stop after target 1 is used, and costs are charged. "
@@ -388,7 +404,7 @@ def main(argv=None):
     ap.add_argument("--no-fetch", action="store_true", help="only show the saved record; do not fetch bars or record new plans")
     a = ap.parse_args(argv)
     now = time.time()
-    doc = document(load(), now) if a.no_fetch else snapshot(now=now)
+    doc = document(load(), now, replay=_replay_summary()) if a.no_fetch else snapshot(now=now)
     if a.json:
         print(json.dumps(doc))
     else:

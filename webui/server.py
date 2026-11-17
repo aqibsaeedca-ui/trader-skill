@@ -65,6 +65,10 @@ COMMANDS = [
          help="Every trade plan the console recommends, for Gold and Bitcoin, is recorded when shown and graded later against what price actually did, "
               "whether or not you took it: would it have won, lost, or never triggered. Shows the right/wrong record with honest bands.",
          script="webui/scorecard.py", fixed=["--json"], view="scorecard", params=[]),
+    dict(id="recbacktest", group="Gold", title="Backtest every recommendation",
+         help="Replays history hour by hour: at each point the Gold and Bitcoin analysis is rebuilt from only the bars that existed then, every plan the page would have ranked "
+              "in its top three is recorded, and each is graded win, loss or never triggered with conservative fills and costs. Takes about 45 seconds. Nothing is tuned on the result.",
+         script="webui/recommendation_backtest.py", fixed=["--json"], view="scorecard", params=[]),
     dict(id="pending", group="Gold", title="Pending Order Intelligence",
          help="BUY STOP, SELL STOP, BUY LIMIT and SELL LIMIT, each with a full plan, its own out-of-sample evidence, broker-rule checks and "
               "account-wide risk. An order is only recommended after its strategy passed validation. Paper orders are a simulation; nothing is sent to a broker.",

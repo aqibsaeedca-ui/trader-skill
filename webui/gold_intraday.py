@@ -107,7 +107,15 @@ def analyse(symbol, ttl15=60):
     weekly = get_bars(symbol, "1wk", "5y", 3600)
     h1 = get_bars(symbol, "60m", "6mo", 300)
     m15 = get_bars(symbol, "15m", "30d", ttl15)
-    if min(len(daily), len(weekly), len(h1), len(m15)) < 60:
+    return analyse_bars(symbol, daily, weekly, h1, m15)
+
+
+def analyse_bars(symbol, daily, weekly, h1, m15):
+    """The analysis itself, from bars already in hand. The live page and the historical replay both call this, so a replay shows exactly what
+    the page would have shown at that moment."""
+    m15 = m15 or []
+    have15 = len(m15) >= 60                 # the replay of older periods has no 15 minute history; the live page always does
+    if min(len(daily), len(weekly), len(h1)) < 60 or (m15 and not have15):
         raise SystemExit("error: not enough bars returned for one of the timeframes")
     bars = {"15m": m15, "1h": h1, "4h": resample(h1, 4), "1d": daily, "1w": weekly}
 
@@ -122,7 +130,7 @@ def analyse(symbol, ttl15=60):
     prev = daily[-2] if len(daily) > 1 else daily[-1]
     prev_levels = [(prev[1], "prev day high"), (prev[2], "prev day low"), (prev[3], "prev day close")]
     higher = {"4h": ("1d", "1w"), "1h": ("4h", "1d", "1w"), "15m": ("1h", "4h", "1d", "1w")}
-    for tf in ("4h", "1h", "15m"):                 # high to low, so each can use the ones above
+    for tf in (("4h", "1h", "15m") if have15 else ("4h", "1h")):                 # high to low, so each can use the ones above
         cfg = cfgs[tf]
         b = bars[tf]
         pts = trend_points(b)
@@ -135,12 +143,14 @@ def analyse(symbol, ttl15=60):
         setup[tf] = gold.compute_setups(b, pts, cfg["k"], cfg["win"], base + inject, cfg["step"],
                                         min_risk_atr=1.0)
 
-    price = m15[-1][3]
+    price = (m15 if have15 else h1)[-1][3]
     levels = confluence(own, price, setup["1h"]["atr"])
     for tf, unit in (("15m", "15m"), ("1h", "1h"), ("4h", "4h"), ("1d", "daily"), ("1w", "weekly")):
+        if tf not in setup:
+            continue
         gold.attach_plans(setup[tf], unit, levels, 1.0 if tf in INTRADAY else 0.0)
     return dict(symbol=symbol, price=price, bars=bars, own=own, setup=setup, levels=levels,
-                asof=m15[-1][0])
+                asof=(m15 if have15 else h1)[-1][0])
 
 
 def confluence(own, price, atr_ref):
