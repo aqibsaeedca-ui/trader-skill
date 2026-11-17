@@ -20,7 +20,8 @@ whether any strategy makes money.
 | `journal.py` | Trading journal with signal IDs and planned versus realised risk |
 | `research.py` | Runs everything and writes `trader/validation.json` |
 | `intelligence.py` | Builds the dashboard document with the NO TRADE gates |
-| `watch_extras.py`, `gold_watch.py` | Alerts, per asset |
+| `watch_extras.py`, `gold_watch.py`, `pending_watch.py` | Alerts, per asset |
+| `orders.py`, `pending_strategies.py`, `paper.py`, `pending.py` | Pending Order Intelligence (section 9) |
 | `server.py`, `index.html` | Local web console (127.0.0.1 only) |
 
 Runtime files go in `trader/` (ignored by git): `validation.json`, `models/`, `holdout_log.json`, `portfolio.json`,
@@ -107,7 +108,30 @@ Backtest costs default to placeholders (gold: spread 0.30 and slippage 0.10 per 
 placeholders everywhere they appear. Replace them with your broker's numbers in the research form, or let the run measure them
 from stored bid and ask data.
 
-## 9. Known limits
+## 9. Pending Order Intelligence
+
+Code: `orders.py` (broker rules, tick rounding, plans, account-wide risk), `pending_strategies.py` (BUY STOP, SELL STOP, BUY LIMIT,
+SELL LIMIT and the regime gate), `paper.py` (paper order lifecycle and audit), `pending.py` (the dashboard builder),
+`pending_watch.py` (alerts). Design notes and rules are in `PENDING_ORDERS_PLAN.md`.
+
+- Each order type is its own strategy with its own walk-forward evidence (`research.py run --family pending`, also a button).
+  An order type is recommended only when it passed the same validation gate as the core strategies on the current code.
+  Otherwise the page says `NO VALID PENDING ORDER, WAIT FOR CONFIRMATION.` A plan may still be shown, marked blocked.
+- Chance of a fill and win rate after a fill are separate, are frequencies from past data with 95% bands, and appear only
+  with at least 30 placed and 30 filled historical orders.
+- Backtest fills are conservative: a limit order must be traded through, no target credit on its fill bar, stop entries fill at the
+  worse of open and trigger plus slippage, orders expire, and a stop order is cancelled if a bar closes beyond its structural stop.
+- Risk is account-wide: open plus resting plus new risk against 1% by default, 0.5% per setup, 1.5% daily lockout, duplicates
+  refused, and a both-directions-trigger scenario. Missing equity blocks the recommendation instead of guessing.
+- Paper orders are created by the server from a fresh analysis (`/api/paper_orders`), never from numbers the browser sends. A blocked
+  order is stored as REJECTED with its reasons. An unvalidated order type needs an explicit acknowledgement and is labelled research.
+  OCO (BUY STOP with SELL STOP) exists only in the paper simulator. Research-signal state and order state are kept apart, and
+  every change is appended to `trader/pending_audit.json` with a timestamp.
+- Broker rules (stops level, lot step, hedging or netting, no stop-limit unless confirmed) are typed in at `/api/pending/settings`
+  or on the page. Until saved they are placeholders and labelled as such. MetaTrader 5 is not connected.
+- Alerts (`pending_watch.py`) are on by default for the Gold watcher only and can be switched off; the Bitcoin watcher is unchanged.
+
+## 10. Known limits
 
 - Out-of-sample evidence so far is thin: the available gold history gives each strategy a handful of out-of-sample trades.
 - Event studies have a handful of events per type, flagged as too few to rely on.
