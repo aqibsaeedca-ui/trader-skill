@@ -177,8 +177,14 @@ class Http(Redirected):
         data = json.dumps(body) if body is not None else None
         if data is not None:
             h.setdefault("Content-Type", "application/json")
-        conn.request(method, path, body=data, headers=h)
-        r = conn.getresponse()
+        try:
+            conn.request(method, path, body=data, headers=h)
+            r = conn.getresponse()
+        except (ConnectionAbortedError, ConnectionResetError):          # Windows can abort a POST to a 404 before the reply is read; ask once more
+            conn.close()
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            conn.request(method, path, body=data, headers=h)
+            r = conn.getresponse()
         txt = r.read().decode()
         conn.close()
         try:
@@ -284,3 +290,8 @@ class PendingApi(Http):
     def test_paper_writes_need_a_local_origin(self):
         self.assertEqual(self.req("POST", "/api/paper_orders", {"action": "get"}, headers={"Origin": "http://evil.example"})[0], 403)
         self.assertEqual(self.req("POST", "/api/pending/settings", {"action": "get"}, host="evil.example:80")[0], 403)
+
+
+for _name in dir(Http):                                     # PendingApi only adds its own tests; it must not re-run the ones it inherits
+    if _name.startswith("test_") and _name not in PendingApi.__dict__:
+        setattr(PendingApi, _name, None)

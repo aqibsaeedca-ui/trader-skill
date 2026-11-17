@@ -303,6 +303,7 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'lossattr' && d.code === 0) { try { return renderLossAttribution(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The loss attribution could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'scorecard' && d.code === 0) { try { return renderScorecard(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The scorecard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'pending' && d.code === 0) { try { return renderPending(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The pending orders could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'intel' && d.code === 0) { try { return renderIntel(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The dashboard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
@@ -790,6 +791,40 @@ function renderResearch(d){
   $('#result').innerHTML = hero + how + '<div class="in-sec">The four strategies</div><div class="rs-grid">' + cards + '</div>' +
     (mlHtml ? '<div class="in-sec">Prediction model</div><div class="rs-grid">' + mlHtml + dataCard + '</div>' : '<div class="rs-grid">' + dataCard + '</div>') + next +
     '<div class="note">' + esc(g.note) + ' Not financial advice.</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 80000)) + '</pre></details>';
+}
+
+function renderLossAttribution(d){
+  const g = JSON.parse(d.stdout);
+  const P = x => x == null ? 'n/a' : Math.round(x * 100) + '%';
+  const R = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : '';
+  const statRow = (name, s) => '<tr><td>' + name + '</td><td>' + s.completed + '</td><td>' + s.wins + ' / ' + s.losses + '</td><td>' + (s.win_rate == null ? 'n/a' : P(s.win_rate) + (s.win_ci ? ' <span class="sub">(' + P(s.win_ci[0]) + ' to ' + P(s.win_ci[1]) + ')</span>' : '')) + '</td><td>' + R(s.mean_r) + '</td><td>' + N(s.profit_factor) + '</td><td>' + N(s.max_drawdown_r, 1) + 'R</td></tr>';
+  const pop = (p, title) => {
+    if (!p) return '<div class="in-sec">' + title + '</div><div class="note">Not available yet. Run <b>Backtest every recommendation</b> first; it saves the historical attribution.</div>';
+    const c = p.counts, L = p.losses;
+    let h = '<div class="in-sec">' + esc(title) + '</div>';
+    h += '<div class="rs-stats"><div><div class="k">Recommendations</div><div class="v">' + c.recommendations.toLocaleString('en-US') + '</div></div><div><div class="k">Unique opportunities</div><div class="v">' + c.unique_opportunities.toLocaleString('en-US') + '</div><div class="sub">the same idea repeated is counted once</div></div>' +
+      '<div><div class="k">Simulated fills</div><div class="v">' + c.triggered.toLocaleString('en-US') + '</div></div><div><div class="k">Completed</div><div class="v">' + c.completed.toLocaleString('en-US') + '</div></div><div><div class="k">Still open</div><div class="v">' + c.open + '</div></div><div><div class="k">Waiting / never triggered / invalidated</div><div class="v">' + c.waiting + ' / ' + c.not_triggered + ' / ' + c.invalidated + '</div></div></div>';
+    h += '<div class="note"><b>None of these was a real trade.</b> ' + c.executed_on_a_broker + ' were sent to a broker. A recommendation is only "filled" through a conservative simulated fill, and an unfinished position is never counted as a win or a loss.</div>';
+    h += '<table class="in-t"><tr><th>Population</th><th>Completed</th><th>Won / lost</th><th>Right rate (95% band)</th><th>Avg result</th><th>Profit factor</th><th>Worst drawdown</th></tr>' + statRow('Every recommendation', p.stats_all) + statRow('Each opportunity once (de-duplicated)', p.stats_deduplicated) + '</table>' +
+      '<div class="sub">Repeated recommendations of the same idea are not independent trades. The de-duplicated line is the fairer one.</div>';
+    h += '<h4 style="margin:14px 0 6px">Why the ' + L.count.toLocaleString('en-US') + ' losing trades lost</h4><div class="sub">A cause counts only when recorded evidence supports it; a loss can carry several. "Unknown" means the data to judge it does not exist, never that it was ruled out.</div>' +
+      '<table class="in-t"><tr><th>Possible cause</th><th>Supported by evidence</th><th>Share of losses</th><th>Unknown (cannot be judged)</th></tr>' + L.causes.map(x => '<tr><td>' + esc(x.label) + '</td><td>' + x.supported.toLocaleString('en-US') + '</td><td>' + (L.count ? P(x.supported / L.count) : 'n/a') + '</td><td>' + (x.unknown ? x.unknown.toLocaleString('en-US') : '–') + '</td></tr>').join('') + '</table>' +
+      '<div class="sub">Losses with no evidence-supported cause beyond "no confirmation by design": ' + L.none_supported + '.</div>';
+    const f = p.fill_gap;
+    h += '<div class="note"><b>Planned entry versus fill.</b> ' + esc(f.note) + (f.breakout_fills ? ' Across ' + f.breakout_fills + ' breakout fills the mean gap was ' + N(f.mean) + ' price units (negative = a better price).' : '') + ' R is always measured in the planned risk (entry to stop), so a late fill that is stopped loses more than 1R.</div>';
+    const a = p.audit;
+    h += '<div class="note"><b>Simulator audit.</b> ' + a.checked.toLocaleString('en-US') + ' filled records were re-checked: ' + a.failed + ' failed. Checks: ' + esc(a.checks.join('; ')) + '.' + (a.failed ? ' Failed ids: ' + esc(a.failed_ids.join(', ')) : '') + '</div>';
+    const slice = (title, key) => '<div class="rs-card"><h4>' + title + '</h4><table class="in-t"><tr><th>Group</th><th>Done</th><th>Won / lost</th><th>Right rate</th><th>Avg</th><th>PF</th><th>DD</th></tr>' + Object.entries(p.by[key] || {}).map(([k, s]) => statRow(esc(k.replace(/_/g, ' ')), s)).join('') + '</table></div>';
+    h += '<div class="rs-grid">' + slice('By market regime at the recommendation', 'regime') + slice('By trading session at the fill', 'session') + slice('By strategy', 'strategy') + slice('By chart', 'tf') + slice('By grade the plan was given', 'grade') + '</div>';
+    const rows = p.rows.filter(r => r.state === 'LOSS').slice(0, 25).map(r => '<tr><td>' + esc(when(r.created)) + '</td><td>' + esc(r.symbol) + ' · ' + esc(r.tf) + '</td><td>' + esc(r.strategy) + ' <span class="chip">grade ' + esc(r.grade || '') + '</span></td><td>' + N(r.entry) + (r.fill_price != null ? ' → ' + N(r.fill_price) : '') + '</td><td>' + N(r.stop) + '</td><td>' + R(r.r_net) + '</td><td>' + esc(r.regime || '') + ' / ' + esc(r.session || '') + '</td><td class="sub">' + esc(r.exit_reason) + (r.overlapping_active ? ' · ' + r.overlapping_active + ' overlapping' : '') + '<br>' + Object.entries(r.causes || {}).filter(([k]) => k !== 'no_confirmation').map(([k, v]) => '<b>' + esc(k.replace(/_/g, ' ')) + ':</b> ' + esc(v)).join('<br>') + '</td></tr>').join('');
+    h += '<details class="raw"><summary>Most recent losing trades with the evidence for each cause</summary><table class="in-t"><tr><th>Recommended</th><th>Market</th><th>Plan</th><th>Entry → fill</th><th>Stop</th><th>Result</th><th>Regime / session</th><th>Exit and evidence</th></tr>' + rows + '</table></details>';
+    return h;
+  };
+  $('#result').innerHTML = '<div class="rs-hero none"><div class="big">Loss attribution</div><div>What happened to every recommendation, and why the losing ones lost, using only recorded evidence. ' + (g.live && g.live.errors && g.live.errors.length ? 'Data problem: ' + esc(g.live.errors.join('; ')) : '') + '</div><div class="rs-meta"><span class="chip">checked ' + esc(when(g.checked)) + '</span></div></div>' +
+    g.notes.map(n => '<div class="note">' + esc(n) + '</div>').join('') + pop(g.live, 'Live record (forward, hypothetical)') + pop(g.replay, 'Historical replay (backtest)') +
+    '<details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
 }
 
 function renderScorecard(d){

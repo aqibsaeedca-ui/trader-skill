@@ -50,7 +50,7 @@ def decision_points(m15, h1, every=4):
     return pts
 
 
-def run_symbol(symbol, d, w, h1, m15, every=4, analyse_bars=None, now=None):
+def run_symbol(symbol, d, w, h1, m15, every=4, analyse_bars=None, now=None, bars_out=None):
     """Replay one market. Returns (records, coverage). Bars are tuples (t, high, low, close, open)."""
     import gold_intraday as gi
     if analyse_bars is None:
@@ -81,6 +81,8 @@ def run_symbol(symbol, d, w, h1, m15, every=4, analyse_bars=None, now=None):
     for r in recs:                          # grade on the slice that starts at the recommendation, so each plan only scans the bars after it
         i = bisect.bisect_left(times[r["tf"]], r["created_ts"])
         r["result"] = sc.grade(r, bars[r["tf"]][i:], now)
+    if bars_out is not None:
+        bars_out[symbol] = bars
     cov = dict(symbol=symbol, decision_points=used, skipped=skipped, first=sc._iso(pts[0][0]) if pts else None, last=sc._iso(pts[-1][0]) if pts else None,
                plans=len(recs))
     return recs, cov
@@ -124,17 +126,24 @@ def run(symbols=DEFAULT_SYMBOLS, every=4, fetch=None, path=None, analyse_bars=No
 
         def fetch(s):
             return (gi.get_bars(s, "1d", "2y", 1800), gi.get_bars(s, "1wk", "5y", 3600), gi.get_bars(s, "60m", "6mo", 300), gi.get_bars(s, "15m", "30d", 60))
-    allrecs, covs, errors = [], [], []
+    allrecs, covs, errors, all_bars = [], [], [], {}
     for s in symbols:
         try:
             d, w, h1, m15 = fetch(s)
-            recs, cov = run_symbol(s, d, w, h1, m15, every, analyse_bars)
+            recs, cov = run_symbol(s, d, w, h1, m15, every, analyse_bars, bars_out=all_bars)
         except (Exception, SystemExit) as e:
             errors.append("%s: %s" % (s, str(e)[:160]))
             continue
         allrecs += recs
         covs.append(cov)
     doc = document(allrecs, covs, now)
+    if allrecs:                             # why the replayed recommendations lost, from recorded evidence only
+        try:
+            import loss_attribution as la
+            import macro
+            doc["attribution"] = la.build(allrecs, all_bars, macro.load_store(), "historical replay")
+        except Exception as e:
+            doc["attribution_error"] = str(e)[:200]
     doc["errors"] = errors
     doc["seconds"] = round(time.time() - now, 1)
     if covs:

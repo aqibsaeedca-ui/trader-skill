@@ -99,6 +99,50 @@ class Breakout(unittest.TestCase):
         self.assertEqual(sc.grade(rec(kind="breakout"), bars, NOW)["state"], "NOT TRIGGERED")
 
 
+class Legs(unittest.TestCase):
+    def test_exit_legs_reproduce_the_reported_result(self):
+        for bars in ([bar(1, 101, 99.5, 100.2), bar(2, 106, 100.5, 105.5), bar(3, 106, 99, 100.5)],
+                     [bar(1, 101, 99.5, 100.2), bar(2, 101, 100.2, 100.8), bar(3, 116, 101, 115.5)],
+                     [bar(1, 101, 99.5, 100.2), bar(2, 93, 92, 92.5, op=93.0)],
+                     [bar(1, 101, 99.5, 100.2), bar(2, 104, 100.5, 103.0)]):
+            g = sc.grade(rec(), bars, NOW)
+            risk = g["risk"]
+            total = sum(l["frac"] * (l["price"] - g["fill_price"]) / risk for l in g["legs"])
+            self.assertAlmostEqual(total, g["r_gross"], places=6)
+            self.assertAlmostEqual(sum(l["frac"] for l in g["legs"]), 1.0, places=6)
+
+    def test_an_unfinished_position_is_open_not_a_win(self):
+        g = sc.grade(rec(), [bar(1, 101, 99.5, 100.2), bar(2, 106, 100.5, 105.5)], NOW)
+        self.assertEqual((g["state"], g["final"], g["best_target"]), ("OPEN", False, 1))
+        s = sc.summary([dict(rec(), result=g)])["all"]
+        self.assertEqual((s["resolved"], s["counts"]["WIN"], s["protected_open"]), (0, 0, 1))
+
+
+class Engine2(unittest.TestCase):
+    def test_a_late_breakout_fill_that_is_stopped_loses_more_than_one_r(self):
+        r = sc.make_record("GC=F", "1h", plan(kind="breakout", side="short", entry=100.0, stop=105.0, targets=(95.0, 90.0, 85.0)), T0)
+        g = sc.grade(r, [bar(1, 100.5, 98.0, 99.0), bar(2, 106, 96.0, 97.0, op=96.0)], NOW)     # confirms below 100, fills at the next open 96, stopped at 105
+        self.assertEqual(g["state"], "LOSS")
+        self.assertAlmostEqual(g["r_gross"], -(105 - 96) / 5.0, places=6)                          # -1.8R in the planned risk, not a flattering -1R
+        self.assertAlmostEqual(g["risk_fill"], 9.0)
+
+    def test_a_limit_that_gaps_through_fills_at_the_open_inside_the_bar(self):
+        g = sc.grade(rec(), [bar(1, 98.0, 96.0, 97.0, op=97.5), bar(2, 104, 97, 103.0)], NOW)
+        self.assertAlmostEqual(g["fill_price"], 97.5)
+        self.assertLessEqual(g["fill_price"], 98.0)
+
+    def test_a_bar_that_opens_beyond_the_stop_means_no_trade(self):
+        g = sc.grade(rec(), [bar(1, 94.0, 90.0, 91.0, op=93.0)], NOW)
+        self.assertEqual(g["state"], "INVALIDATED")
+
+    def test_results_from_an_older_engine_are_regraded(self):
+        r = rec()
+        r["result"] = dict(state="LOSS", final=True, engine=1)
+        bars = [bar(1, 101, 99.5, 100.2), bar(2, 106, 100.5, 105.5), bar(3, 106, 99, 100.5)]
+        sc.grade_all([r], {"GC=F": {"1h": bars}}, NOW)
+        self.assertEqual((r["result"]["state"], r["result"]["engine"]), ("WIN", sc.ENGINE))
+
+
 class Causal(unittest.TestCase):
     def test_bars_before_the_recommendation_and_forming_bars_are_ignored(self):
         r = rec()
@@ -157,6 +201,9 @@ class Records(unittest.TestCase):
     def test_story_says_won_lost_or_nothing(self):
         r = rec()
         r["result"] = sc.grade(r, [bar(1, 101, 99.5, 100.2), bar(2, 106, 100.5, 105.5)], NOW)
+        self.assertEqual(r["result"]["state"], "OPEN")                    # target 1 reached but unfinished: never counted as a win yet
+        self.assertIn("not final", sc.story(r))
+        r["result"] = sc.grade(r, [bar(1, 101, 99.5, 100.2), bar(2, 106, 100.5, 105.5), bar(3, 106, 99, 100.5)], NOW)
         self.assertIn("WON", sc.story(r))
         r["result"] = sc.grade(r, [bar(1, 101, 99.5, 100.2), bar(2, 101, 94, 94.5)], NOW)
         self.assertIn("LOST", sc.story(r))

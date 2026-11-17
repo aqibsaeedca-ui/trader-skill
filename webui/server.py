@@ -65,6 +65,10 @@ COMMANDS = [
          help="Every trade plan the console recommends, for Gold and Bitcoin, is recorded when shown and graded later against what price actually did, "
               "whether or not you took it: would it have won, lost, or never triggered. Shows the right/wrong record with honest bands.",
          script="webui/scorecard.py", fixed=["--json"], view="scorecard", params=[]),
+    dict(id="lossattr", group="Gold", title="Loss attribution report",
+         help="What happened to every recommendation and why the losing ones lost. A cause is shown only when recorded evidence supports it, otherwise it is marked unknown. "
+              "Separates recommendations from simulated fills and open positions, counts repeated ideas once, and audits the simulator's own arithmetic.",
+         script="webui/loss_attribution.py", fixed=["--json"], view="lossattr", params=[]),
     dict(id="recbacktest", group="Gold", title="Backtest every recommendation",
          help="Replays history hour by hour: at each point the Gold and Bitcoin analysis is rebuilt from only the bars that existed then, every plan the page would have ranked "
               "in its top three is recorded, and each is graded win, loss or never triggered with conservative fills and costs. Takes about 45 seconds. Nothing is tuned on the result.",

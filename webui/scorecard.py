@@ -42,6 +42,7 @@ HOLD = {"15m": 48, "1h": 48, "4h": 30, "daily": 20, "weekly": 12}         # bars
 SPLIT = (0.5, 0.3, 0.2)
 RES_KEYS = {"15m": "15m", "1h": "1h", "4h": "4h", "daily": "1d", "weekly": "1w"}
 ALIAS = {"1d": "daily", "1w": "weekly", "short": "daily", "long": "weekly"}
+ENGINE = 2        # 2: R in planned risk; a limit that gaps through fills at the open; an unfinished position is OPEN, never a win
 MAX_KEEP = 1500
 RESOLVED = ("WIN", "LOSS")
 FINAL = ("WIN", "LOSS", "TIMED OUT", "NOT TRIGGERED", "INVALIDATED")
@@ -95,7 +96,8 @@ def make_record(symbol, tf, plan, created_ts, source="assessment"):
     return dict(id=rid, key=key, symbol=symbol, tf=tf, name=plan["name"], side=plan["side"], kind=plan["kind"], entry=entry, stop=stop, targets=tg,
                 created_ts=created_ts, created=_iso(created_ts), grade=plan.get("grade"), score=plan.get("score"), rank=plan.get("rank"),
                 status_then=plan.get("status"), expiry_bars=EXPIRY[tf], hold_bars=HOLD[tf], tick=assets.tick_for(entry), cost=float(prof["default_cost"]),
-                why=list(plan.get("why") or [])[:4], source=source, result=None)
+                why=list(plan.get("why") or [])[:4], source=source, result=None,
+                trend=plan.get("trend"), dist_atr=plan.get("dist_atr"), agree=list(plan.get("agree") or []), weak=plan.get("weak"), blend_r=plan.get("blend_r"))
 
 
 def record(recs, symbol, tf, plans, created_ts, max_rank=3, source="assessment", index=None):
@@ -129,7 +131,7 @@ def grade(rec, bars, now):
     entry, stop, tg, tick = rec["entry"], rec["stop"], rec["targets"], rec["tick"]
     seq = [b for b in bars if b[0] >= rec["created_ts"] and b[0] + step <= now]
     out = dict(state="WAITING", checked_bars=len(seq), checked_to=_iso(seq[-1][0] + step) if seq else None, fill_price=None, fill_time=None,
-               exit_time=None, best_target=0, r_gross=None, r_net=None, note="")
+               exit_time=None, best_target=0, r_gross=None, r_net=None, note="", legs=[])
     filled, fill, fill_t = False, None, None
     risk = abs(entry - stop)
     k, rem, real, stop_cur = 0, 1.0, 0.0, stop
@@ -151,7 +153,12 @@ def grade(rec, bars, now):
                     out.update(state="NOT TRIGGERED", note="price never traded through the entry before the plan expired")
                     break
                 if (lo <= entry - tick) if sgn == 1 else (hi >= entry + tick):
-                    filled, fill, fill_t, first_limit_bar = True, entry, t, True
+                    # a bar that opens beyond the limit fills at its open (the better price); otherwise at the limit
+                    filled, fill, fill_t, first_limit_bar = True, (min(entry, op) if sgn == 1 else max(entry, op)), t, True
+                    if (fill - stop) * sgn <= 0:
+                        out.update(state="INVALIDATED", note="the bar opened beyond the stop, so no clean entry existed", exit_time=_iso(t + step))
+                        filled = False
+                        break
                 elif beyond_stop(cl):
                     out.update(state="INVALIDATED", note="price closed beyond the stop before the entry was reached", exit_time=_iso(t + step))
                     break
@@ -176,13 +183,14 @@ def grade(rec, bars, now):
                 if (tg[0] - fill) * sgn <= 0:
                     out.update(state="NOT TRIGGERED", note="the next bar opened beyond the first target, so the move was already over")
                     break
-                risk = abs(fill - stop)
+                # R is always measured in the PLANNED risk (entry to stop): a late fill that is then stopped loses MORE than 1R, as it would in practice
         if filled:
             bars_in += 1
             hit_stop = lo <= stop_cur if sgn == 1 else hi >= stop_cur
             if hit_stop:
                 px = min(stop_cur, op) if sgn == 1 else max(stop_cur, op)   # a gap exits at the open
                 real += rem * (px - fill) * sgn / risk
+                out["legs"].append(dict(price=px, frac=rem, why="stop" if k == 0 else "stop at entry"))
                 rem, closed = 0.0, True
                 out["exit_time"] = _iso(t + step)
                 out["note"] = "stopped out" if k == 0 else "stopped at the entry after target 1 was reached"
@@ -192,6 +200,7 @@ def grade(rec, bars, now):
                 continue
             while k < 3 and rem > 1e-9 and ((hi >= tg[k]) if sgn == 1 else (lo <= tg[k])):
                 real += SPLIT[k] * (tg[k] - fill) * sgn / risk
+                out["legs"].append(dict(price=tg[k], frac=SPLIT[k], why="target %d" % (k + 1)))
                 rem -= SPLIT[k]
                 k += 1
                 if k == 1:
@@ -199,6 +208,7 @@ def grade(rec, bars, now):
             if k >= 1 and rem > 1e-9 and ((lo <= stop_cur) if sgn == 1 else (hi >= stop_cur)):
                 rem_exit = 0.0                                            # bar order unknown: assume the entry stop was touched too
                 real += rem * rem_exit
+                out["legs"].append(dict(price=fill, frac=rem, why="stop at entry"))
                 rem, closed = 0.0, True
                 out["exit_time"] = _iso(t + step)
                 out["note"] = "stopped at the entry after target %d" % k
@@ -210,6 +220,7 @@ def grade(rec, bars, now):
                 break
             if bars_in >= rec["hold_bars"]:
                 real += rem * (cl - fill) * sgn / risk
+                out["legs"].append(dict(price=cl, frac=rem, why="time exit"))
                 rem, closed = 0.0, True
                 if k >= 1:
                     out.update(state="WIN", exit_time=_iso(t + step), note="target %d was reached; the rest was scored at the last close after %d bars" % (k, rec["hold_bars"]))
@@ -222,15 +233,13 @@ def grade(rec, bars, now):
             out["state"] = "WIN" if k >= 1 else "LOSS"
         else:
             real += rem * ((last_close - fill) * sgn / risk if last_close is not None else 0.0)
-            if k >= 1:
-                out["state"] = "WIN"
-                out["note"] = "target %d reached and the stop is at the entry, so this cannot lose; the rest is still running (marked at the last close)" % k
-            else:
-                out["state"] = "OPEN"
-                out["note"] = "triggered; no target or stop yet (marked at the last close)"
-        out.update(fill_price=fill, fill_time=_iso(fill_t), best_target=k, r_gross=real, r_net=real - cost_r, risk=risk)
+            out["state"] = "OPEN"                      # an unfinished position is never counted as a win or a loss
+            out["legs"].append(dict(price=last_close, frac=rem, why="mark (not closed)"))
+            out["note"] = ("target %d reached and the stop is at the entry, so it cannot lose; the rest is still running (marked at the last close)" % k) if k >= 1 else "triggered; no target or stop yet (marked at the last close)"
+        out.update(fill_price=fill, fill_time=_iso(fill_t), best_target=k, r_gross=real, r_net=real - cost_r, risk=risk, risk_fill=abs(fill - stop))
     elif filled and out["state"] in ("TIMED OUT", "WIN"):
-        out.update(fill_price=fill, fill_time=_iso(fill_t), best_target=k, r_gross=real, r_net=real - rec["cost"] / risk, risk=risk)
+        out.update(fill_price=fill, fill_time=_iso(fill_t), best_target=k, r_gross=real, r_net=real - rec["cost"] / risk, risk=risk, risk_fill=abs(fill - stop))
+    out["engine"] = ENGINE
     if out["state"] == "WAITING" and now - rec["created_ts"] > (rec["expiry_bars"] + 1) * step and not filled:
         out.update(state="NOT TRIGGERED", note="the plan expired before the entry was reached")
     out["final"] = out["state"] in ("NOT TRIGGERED", "INVALIDATED", "LOSS", "TIMED OUT") or (out["state"] == "WIN" and (closed or "after %d bars" % rec["hold_bars"] in out["note"]))
@@ -242,8 +251,8 @@ def grade_all(recs, bars_by_symbol, now):
     changed = []
     for r in recs:
         res = r.get("result") or {}
-        if res.get("final"):
-            continue
+        if res.get("final") and res.get("engine") == ENGINE:
+            continue                            # a result made by an older grading engine is regraded from the bars
         bars = (bars_by_symbol.get(r["symbol"]) or {}).get(r["tf"])
         if not bars:
             continue
@@ -270,7 +279,8 @@ def _agg(rows):
     w, l = cnt["WIN"], cnt["LOSS"]
     done = [r["result"]["r_net"] for r in rows if (r.get("result") or {}).get("state") in ("WIN", "LOSS", "TIMED OUT") and r["result"].get("r_net") is not None]
     n = w + l
-    return dict(total=len(rows), counts=cnt, resolved=n, win_rate=(w / n if n else None), win_ci=wilson(w, n), wl_ratio=(w / l if l else None),
+    prot = sum(1 for r in rows if (r.get("result") or {}).get("state") == "OPEN" and (r["result"].get("best_target") or 0) >= 1)
+    return dict(protected_open=prot, total=len(rows), counts=cnt, resolved=n, win_rate=(w / n if n else None), win_ci=wilson(w, n), wl_ratio=(w / l if l else None),
                 mean_r=(sum(done) / len(done) if done else None), total_r=sum(done), enough=n >= 30,
                 triggered=sum(cnt[s] for s in ("WIN", "LOSS", "TIMED OUT", "OPEN")))
 
@@ -301,7 +311,7 @@ def story(r):
         return base + " " + fill + " It reached target %d. Net result %+.2fR after costs: it would have WON." % (g["best_target"], g["r_net"])
     if s == "LOSS":
         return base + " " + fill + " The stop was hit first. Net result %+.2fR after costs: it would have LOST." % g["r_net"]
-    if s == "WIN" and not g.get("final"):
+    if s == "OPEN" and g.get("best_target", 0) >= 1:
         return base + " " + fill + " Target %d was reached and the stop moved to the entry, so it cannot lose from here; the rest is still running, currently %+.2fR (not final)." % (g["best_target"], g["r_net"])
     if s == "TIMED OUT":
         return base + " " + fill + " Unresolved after the holding limit, scored at %+.2fR." % g["r_net"]
