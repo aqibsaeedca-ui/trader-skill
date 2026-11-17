@@ -598,6 +598,11 @@ def build_json(symbol, bars, a, meta, args):
             out["long"] = section_dict(compute_setups(weekly, wpts, 4, 104, extra, pf["steps"]["w"]), args, symbol, "weekly")
         except SystemExit as e:
             out["long_error"] = str(e)
+    try:                                    # every plan shown is put on record so it can be scored later; never breaks the page
+        import scorecard
+        scorecard.record_from_json(out, symbol)
+    except Exception:
+        pass
     out["data_quality"] = data_quality(symbol, bars, wants(args, "long"))
     extra_txt = zones_report(symbol, bars, a, args) if args.horizon != "none" else None
     out["report"] = report(symbol, a, meta, args, extra_txt)

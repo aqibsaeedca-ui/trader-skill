@@ -307,6 +307,11 @@ class Watcher:
         try:
             res = gi.analyse(settings["symbol"])
             now = time.time()
+            try:                                       # put every plan on record for the scorecard; never silences the alerts
+                import scorecard
+                scorecard.record_from_res(res, settings["symbol"], now)
+            except Exception:
+                pass
             extra, extra_err = [], ""
             if settings.get("intel"):
                 try:                                       # a failure here must never silence the level alerts

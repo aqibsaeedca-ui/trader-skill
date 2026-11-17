@@ -303,6 +303,7 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'scorecard' && d.code === 0) { try { return renderScorecard(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The scorecard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'pending' && d.code === 0) { try { return renderPending(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The pending orders could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'intel' && d.code === 0) { try { return renderIntel(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The dashboard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'goldnews' && d.code === 0) { try { return renderGoldNews(d); } catch (e) { console.error(e); } }
@@ -789,6 +790,35 @@ function renderResearch(d){
   $('#result').innerHTML = hero + how + '<div class="in-sec">The four strategies</div><div class="rs-grid">' + cards + '</div>' +
     (mlHtml ? '<div class="in-sec">Prediction model</div><div class="rs-grid">' + mlHtml + dataCard + '</div>' : '<div class="rs-grid">' + dataCard + '</div>') + next +
     '<div class="note">' + esc(g.note) + ' Not financial advice.</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 80000)) + '</pre></details>';
+}
+
+function renderScorecard(d){
+  const g = JSON.parse(d.stdout), A = g.summary.all;
+  const P = x => x == null ? 'n/a' : Math.round(x * 100) + '%';
+  const R = v => v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : '';
+  const c = A.counts;
+  const cls = {WIN: 'pass', LOSS: 'fail', OPEN: 'wait', WAITING: 'wait', 'TIMED OUT': 'wait', 'NOT TRIGGERED': 'wait', INVALIDATED: 'wait'};
+  const label = {WIN: 'WOULD HAVE WON', LOSS: 'WOULD HAVE LOST', OPEN: 'Open now', WAITING: 'Waiting for entry', 'TIMED OUT': 'Timed out', 'NOT TRIGGERED': 'Never triggered', INVALIDATED: 'Invalidated before entry'};
+  const hero = '<div class="rs-hero ' + (A.resolved ? 'some' : 'none') + '"><div class="big">' + (A.resolved ?
+      c.WIN + ' right, ' + c.LOSS + ' wrong' + (A.win_rate != null ? ' · ' + P(A.win_rate) + ' of resolved recommendations reached target 1 before the stop' : '') :
+      'No recommendation has resolved yet') + '</div><div>' +
+    (A.resolved ? (A.enough ? '' : 'Only ' + A.resolved + ' resolved so far, so this is not yet a reliable rate (it needs about 30). ') + (A.win_ci ? '95% band for the rate: ' + P(A.win_ci[0]) + ' to ' + P(A.win_ci[1]) + '. ' : '') + 'Average result per triggered plan after costs: <b>' + R(A.mean_r) + '</b>.' :
+      'Plans are recorded each time you open the Gold or Bitcoin assessment and while the watcher runs. Each one is graded later against what price actually did, whether or not you took it. Come back after some time has passed.') + '</div>' +
+    '<div class="rs-meta"><span class="chip">' + A.total + ' recorded</span><span class="chip">' + A.triggered + ' triggered</span><span class="chip">' + c['NOT TRIGGERED'] + ' never triggered</span><span class="chip">' + c.INVALIDATED + ' invalidated</span><span class="chip">' + (c.OPEN + c.WAITING) + ' still live</span>' +
+    (g.added ? '<span class="chip">' + g.added + ' new this refresh</span>' : '') + '<span class="chip">checked ' + esc(when(g.checked)) + '</span></div></div>';
+  const how = '<div class="note"><b>How this is scored.</b> ' + esc(g.method) + '</div>';
+  const grp = (title, key, nm) => {
+    const rows = Object.entries(g.summary.by[key] || {}).map(([k, a]) => '<tr><td>' + esc(nm ? nm(k) : k) + '</td><td>' + a.total + '</td><td>' + a.counts.WIN + ' / ' + a.counts.LOSS + '</td><td>' + (a.win_rate == null ? 'n/a' : P(a.win_rate) + (a.win_ci ? ' <span class="sub">(' + P(a.win_ci[0]) + ' to ' + P(a.win_ci[1]) + ')</span>' : '')) + '</td><td>' + R(a.mean_r) + '</td><td>' + a.counts['NOT TRIGGERED'] + '</td></tr>').join('');
+    return '<div class="rs-card"><h4>' + title + '</h4><table class="in-t"><tr><th>Group</th><th>Plans</th><th>Won / lost</th><th>Right rate (95% band)</th><th>Avg result</th><th>Never triggered</th></tr>' + rows + '</table></div>';
+  };
+  const tfn = {'15m': '15 minute', '1h': '1 hour', '4h': '4 hour', daily: 'Daily', weekly: 'Weekly'};
+  const rows = g.rows.map(r => '<tr><td>' + esc(when(r.created)) + '</td><td>' + esc(r.symbol) + ' · ' + esc(tfn[r.tf] || r.tf) + '</td><td>' + esc(r.name) + (r.grade ? ' <span class="chip">grade ' + esc(r.grade) + '</span>' : '') + '</td><td>' + r.entry.toFixed(2) + ' / ' + r.stop.toFixed(2) + ' / ' + r.targets[0].toFixed(2) + '</td>' +
+    '<td><span class="rs-state ' + (cls[r.state] || 'wait') + '">' + esc(label[r.state] || r.state) + '</span></td><td>' + R(r.r_net) + '</td><td class="sub">' + esc(r.story) + '</td></tr>').join('');
+  $('#result').innerHTML = hero + how + (g.errors.length ? '<div class="note"><b>Data problem:</b> ' + esc(g.errors.join('; ')) + '</div>' : '') +
+    '<div class="in-sec">Every recommendation, newest first</div>' + (rows ? '<table class="in-t"><tr><th>Recommended</th><th>Market</th><th>Plan</th><th>Entry / stop / target 1</th><th>Verdict</th><th>Result</th><th>What happened</th></tr>' + rows + '</table>' : '<div class="sub">Nothing recorded yet. Open Gold assessment or Bitcoin assessment once and come back.</div>') +
+    '<div class="in-sec">Right and wrong ratios</div><div class="rs-grid">' + grp('By market', 'symbol') + grp('By chart', 'tf', k => tfn[k] || k) + grp('By setup type', 'kind', k => k === 'pullback' ? 'Pullback (limit order)' : 'Breakout (needs a closing candle)') + grp('By direction', 'side', k => k === 'long' ? 'Long' : 'Short') + grp('By grade the plan was given', 'grade') + '</div>' +
+    '<div class="note">' + esc(g.caution) + '</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
 }
 
 function renderPending(d){
