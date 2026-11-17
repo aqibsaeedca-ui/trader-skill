@@ -240,3 +240,47 @@ class Http(Redirected):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PendingApi(Http):
+    """Pending-order settings and paper orders over HTTP. Nothing here can reach a broker."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_p = (server.orders.SETTINGS, server.paper.PATH, server.paper.AUDIT)
+        server.orders.SETTINGS = os.path.join(self.dir, "pending_settings.json")
+        server.paper.PATH = os.path.join(self.dir, "paper_orders.json")
+        server.paper.AUDIT = os.path.join(self.dir, "paper_audit.jsonl")
+
+    def tearDown(self):
+        server.orders.SETTINGS, server.paper.PATH, server.paper.AUDIT = self.saved_p
+        super().tearDown()
+
+    def test_commands_exist(self):
+        by = {c["id"]: c for c in server.COMMANDS}
+        for cid in ("pending", "research-pending"):
+            self.assertIn(cid, by)
+            self.assertTrue(os.path.exists(os.path.join(ROOT, by[cid]["script"])), cid)
+        self.assertEqual(by["pending"]["view"], "pending")
+
+    def test_settings_round_trip_and_validation(self):
+        s, d = self.req("GET", "/api/pending/settings")
+        self.assertEqual((s, d["saved"]), (200, False))
+        prof = dict(d["settings"]["profile"], spread=0.4)
+        s, d = self.req("POST", "/api/pending/settings", {"settings": dict(d["settings"], profile=prof)})
+        self.assertEqual((s, d["saved"], d["settings"]["profile"]["spread"]), (200, True, 0.4))
+        self.assertEqual(self.req("POST", "/api/pending/settings", {"settings": {"profile": {"spread": -1}}})[0], 400)
+
+    def test_paper_orders_start_empty_and_say_no_broker_order_exists(self):
+        s, d = self.req("GET", "/api/paper_orders")
+        self.assertEqual((s, d["orders"]), (200, []))
+        self.assertIn("no broker", d["broker_orders"])
+
+    def test_bad_paper_requests_are_400(self):
+        self.assertEqual(self.req("POST", "/api/paper_orders", {"action": "nope"})[0], 400)
+        self.assertEqual(self.req("POST", "/api/paper_orders", {"action": "create", "symbol": "EVIL", "interval": "60m", "order_type": "BUY STOP"})[0], 400)
+        self.assertEqual(self.req("POST", "/api/paper_orders", {"action": "cancel", "id": "missing"})[0], 400)
+
+    def test_paper_writes_need_a_local_origin(self):
+        self.assertEqual(self.req("POST", "/api/paper_orders", {"action": "get"}, headers={"Origin": "http://evil.example"})[0], 403)
+        self.assertEqual(self.req("POST", "/api/pending/settings", {"action": "get"}, host="evil.example:80")[0], 403)

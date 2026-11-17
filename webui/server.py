@@ -24,6 +24,9 @@ import backtester  # noqa: E402
 import gold_watch  # noqa: E402
 import journal  # noqa: E402
 import ml  # noqa: E402
+import orders  # noqa: E402
+import paper  # noqa: E402
+import pending  # noqa: E402
 import portfolio  # noqa: E402
 import research  # noqa: E402
 import strategies  # noqa: E402  (same folder; none of these modules can place an order)
@@ -58,6 +61,20 @@ COMMANDS = [
          params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F", "BTC-USD"]),
                  P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m"]),
                  P("risk", "Risk per trade (%)", "number", "1", "--risk-pct")]),
+    dict(id="pending", group="Gold", title="Pending Order Intelligence",
+         help="BUY STOP, SELL STOP, BUY LIMIT and SELL LIMIT, each with a full plan, its own out-of-sample evidence, broker-rule checks and "
+              "account-wide risk. An order is only recommended after its strategy passed validation. Paper orders are a simulation; nothing is sent to a broker.",
+         script="webui/pending.py", fixed=["--json"], view="pending",
+         params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
+                 P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m"])]),
+    dict(id="research-pending", group="Gold", title="Pending order research",
+         help="Walk-forward test of BUY STOP, SELL STOP, BUY LIMIT and SELL LIMIT with an untouched holdout, fill rates, expiries and cost stress. "
+              "Uses your saved broker profile for costs and the minimum stop distance. Takes about 10 seconds.",
+         script="webui/research.py", fixed=["run", "--family", "pending", "--json"], view="research",
+         params=[P("symbol", "Market", "select", "GC=F", "--symbol", choices=["GC=F", "MGC=F"]),
+                 P("interval", "Chart", "select", "60m", "--interval", choices=["60m", "15m"]),
+                 P("spread", "Spread (price units, blank = profile)", "number", "", "--spread"),
+                 P("slippage", "Slippage per side (price units)", "number", "", "--slippage")]),
     dict(id="research", group="Gold", title="Gold research run",
          help="Walk-forward test of the four strategies with a final untouched holdout, cost stress, news-filter test and a calibrated "
               "model, saved as a reproducible record. Costs are placeholders unless you enter your broker's. Takes about 10 seconds.",
@@ -401,6 +418,53 @@ def journal_action(body):
     raise BadInput("unknown action")
 
 
+def pending_settings_action(body):
+    """Save the broker profile and risk limits you typed in. Validated; these are numbers for arithmetic, not credentials."""
+    if body.get("action") == "get":
+        return dict(settings=orders.load_settings(), saved=orders.settings_saved())
+    try:
+        return dict(settings=orders.save_settings(body.get("settings")), saved=True)
+    except ValueError as e:
+        raise BadInput(str(e)[:300])
+
+
+def paper_action(body):
+    """Paper orders only. A plan is rebuilt on the server from fresh data; nothing here reaches a broker."""
+    action = str(body.get("action", ""))
+    try:
+        if action == "get":
+            return pending.paper_view()
+        if action == "update":
+            sym, iv = str(body.get("symbol", "GC=F")), str(body.get("interval", "60m"))
+            if sym not in ("GC=F", "MGC=F") or iv not in ("60m", "15m"):
+                raise BadInput("unknown market or interval")
+            out = pending.refresh_paper(sym, iv, events=macro_events())
+            return dict(pending.paper_view(), changed=out["changed"])
+        if action == "cancel":
+            allo = paper.load()
+            sink = []
+            paper.cancel(allo, str(body.get("id", "")), str(body.get("reason") or "cancelled by you"), sink=sink)
+            paper.save(allo)
+            paper._audit(sink)
+            return pending.paper_view()
+        if action == "create":
+            sym, iv, typ = str(body.get("symbol", "")), str(body.get("interval", "")), str(body.get("order_type", ""))
+            if sym not in ("GC=F", "MGC=F") or iv not in ("60m", "15m"):
+                raise BadInput("unknown market or interval")
+            made = pending.create_paper(sym, iv, typ, bool(body.get("acknowledge_unvalidated")), bool(body.get("oco")))
+            return dict(pending.paper_view(), created=[dict(id=o["id"], order_state=o["order_state"], reasons=o["reasons"]) for o in made])
+    except BadInput:
+        raise
+    except (ValueError, SystemExit) as e:
+        raise BadInput(str(e)[:300])
+    raise BadInput("unknown action")
+
+
+def macro_events():
+    import macro
+    return macro.load_store()
+
+
 def list_files():
     if not TRADER_DIR.is_dir():
         return []
@@ -455,6 +519,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, WATCHERS[m.group(1)].status())
         if path == "/api/portfolio":
             return self._json(200, portfolio.load())
+        if path == "/api/pending/settings":
+            return self._json(200, dict(settings=orders.load_settings(), saved=orders.settings_saved()))
+        if path == "/api/paper_orders":
+            return self._json(200, pending.paper_view())
         if path == "/api/journal":
             ent = journal.load()
             return self._json(200, dict(entries=journal.recent(ent, 40), summary=journal.analyse(ent)))
@@ -472,7 +540,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._json(403, {"error": "bad host"})
         wm = WATCH_PATH.match(self.path)
-        if self.path not in ("/api/run", "/api/portfolio", "/api/journal") and not wm:
+        if self.path not in ("/api/run", "/api/portfolio", "/api/journal", "/api/pending/settings", "/api/paper_orders") and not wm:
             return self._json(404, {"error": "not found"})
         # JSON content type forces a CORS preflight, which we never grant,
         # so other websites cannot trigger runs from the user's browser.
@@ -492,6 +560,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, portfolio_action(body))
             if self.path == "/api/journal":
                 return self._json(200, journal_action(body))
+            if self.path == "/api/pending/settings":
+                return self._json(200, pending_settings_action(body))
+            if self.path == "/api/paper_orders":
+                return self._json(200, paper_action(body))
             result = run_command(str(body.get("id", "")), body.get("values") or {})
         except BadInput as e:
             return self._json(400, {"error": str(e)})

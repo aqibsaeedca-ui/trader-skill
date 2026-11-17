@@ -249,6 +249,60 @@ def _otype(side, kind):
     return {("long", "stop"): "BUY STOP", ("short", "stop"): "SELL STOP", ("long", "limit"): "BUY LIMIT", ("short", "limit"): "SELL LIMIT"}.get((side, kind), "BUY STOP LIMIT" if side == "long" else "SELL STOP LIMIT")
 
 
+def create_paper(symbol, interval, order_type, acknowledge_unvalidated=False, oco=False, now=None, bars=None, settings=None, validation=None,
+                 portfolio_state=None, equity_entered=None, events=None, orders_path=None, audit_path=None, spread=None):
+    """Make a paper order (or a linked BUY STOP and SELL STOP pair) from a FRESH analysis. The plan is rebuilt here, never taken from the
+    browser, so it cannot be forged. Hard blockers (broker rules, risk, news, stale data, duplicates) store the order as REJECTED, so the
+    refusal is on the record. An unvalidated order type needs `acknowledge_unvalidated`: it is then a research paper order."""
+    if order_type not in orders.ORDER_TYPES:
+        raise paper.PaperError("only BUY STOP, SELL STOP, BUY LIMIT and SELL LIMIT can be papered")
+    now = time.time() if now is None else now
+    step = md.INTERVAL_SEC[interval]
+    if bars is None:
+        import gold_intraday as gi
+        bars = {"15m": gi.get_bars(symbol, "15m", "30d", 60), "60m": gi.get_bars(symbol, "60m", "6mo", 300)}
+    existing = paper.load(orders_path)
+    d = build(symbol, interval, now, bars, validation, portfolio_state, equity_entered, settings, events, existing, spread, audit=[])
+    closed, _ = md.completed(bars[interval], step, now)
+
+    def panel_for(typ):
+        return d["panels"][pst.BY_ORDER_TYPE[typ]]
+
+    def one(typ, group):
+        pan = panel_for(typ)
+        plan = pan["plan"]
+        if plan is None:
+            raise paper.PaperError("no %s plan exists right now (%s)" % (typ, (pan["info"] or pan["refusals"] or ["no confirmed level close enough"])[0]))
+        hard = [b for b in pan["blocking"] if not b.startswith("strategy not validated")]
+        if not pan["evidence"]["validated"] and not acknowledge_unvalidated and not hard:
+            raise paper.PaperError("%s has not passed out-of-sample validation. Confirm that you want a research paper order to simulate it anyway." % typ)
+        return plan, hard, pan["evidence"]["status"]
+
+    other = {"BUY STOP": "SELL STOP", "SELL STOP": "BUY STOP"}.get(order_type)
+    if oco and other is None:
+        raise paper.PaperError("OCO links a BUY STOP with a SELL STOP only")
+    sink, made = [], []
+    plan, hard, status = one(order_type, None)
+    group = None
+    if oco:
+        plan2, hard2, status2 = one(other, None)
+        if hard or hard2:
+            raise paper.PaperError("an OCO pair needs both sides clear: " + "; ".join(hard + hard2))
+        group = "oco-" + __import__("hashlib").sha1((plan["signal_id"] + plan2["signal_id"]).encode()).hexdigest()[:8]
+        made.append(paper.create(plan2, closed, step, now, [], group, status2, interval, existing, sink))
+    made.insert(0, paper.create(plan, closed, step, now, hard, group, status, interval, existing, sink))
+    existing.extend(made)
+    paper.save(existing, orders_path)
+    paper._audit(sink, audit_path)
+    return made
+
+
+def paper_view(orders_path=None, audit_path=None):
+    allo = paper.load(orders_path)
+    return dict(orders=allo[-30:][::-1], summary=paper.summary(allo), audit=paper.audit_log(audit_path)[-15:][::-1],
+                broker_orders="none: no broker is connected, so no broker order exists")
+
+
 def refresh_paper(symbol="GC=F", interval="60m", now=None, bars=None, settings=None, orders_path=None, audit_path=None, events=None):
     """Advance every live paper order against the latest closed bars and save the result and audit entries."""
     now = time.time() if now is None else now

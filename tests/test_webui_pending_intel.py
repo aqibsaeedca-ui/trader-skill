@@ -287,3 +287,40 @@ class RefreshPaper(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CreatePaper(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.op, self.ap = os.path.join(self.dir, "o.json"), os.path.join(self.dir, "a.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def make(self, typ, validation, **kw):
+        args = dict(symbol="GC=F", interval="60m", order_type=typ, now=NOW, bars={"60m": BARS}, validation=validation, portfolio_state=pf_state(),
+                    equity_entered=True, settings=od.clean_settings({}), events=[], orders_path=self.op, audit_path=self.ap)
+        args.update(kw)
+        with GATE_OFF:
+            return pi.create_paper(**args)
+
+    def test_a_validated_order_is_papered_and_audited(self):
+        made = self.make("BUY STOP", record(("buy_stop",)))
+        self.assertEqual(len(made), 1)
+        self.assertEqual(made[0]["order_type"], "BUY STOP")
+        self.assertEqual(len(pp.load(self.op)), 1)
+        self.assertTrue(pp.audit_log(self.ap))
+
+    def test_an_unvalidated_order_needs_an_explicit_acknowledgement(self):
+        with self.assertRaises(pi.paper.PaperError):
+            self.make("BUY STOP", {})
+        made = self.make("BUY STOP", {}, acknowledge_unvalidated=True)
+        self.assertEqual(len(made), 1)
+
+    def test_unknown_order_type_is_refused(self):
+        with self.assertRaises(pi.paper.PaperError):
+            self.make("MARKET", {})
+
+    def test_oco_is_only_for_stop_pairs(self):
+        with self.assertRaises(pi.paper.PaperError):
+            self.make("BUY LIMIT", record(("buy_limit",)), oco=True)
