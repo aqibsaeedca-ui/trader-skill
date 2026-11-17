@@ -318,11 +318,23 @@ def story(r):
     return base + " " + fill + " Still open, currently %+.2fR (not final)." % g["r_net"]
 
 
+def _policy(kind, side):
+    """Evidence grade and strict-mode permission for a strategy. Never breaks the scorecard if the policy module or its result is missing."""
+    try:
+        import strategy_policy
+        return strategy_policy.check(kind, side)
+    except Exception:
+        return dict(evidence_grade="C", evidence_reason="policy unavailable", strict_allowed=True, probability="INSUFFICIENT DATA", note="")
+
+
 def view(recs, limit=80):
-    rows = []
+    rows, memo = [], {}
     for r in sorted(recs, key=lambda x: -x["created_ts"])[:limit]:
         g = r.get("result") or {}
-        rows.append(dict(id=r["id"], symbol=r["symbol"], tf=r["tf"], name=r["name"], side=r["side"], kind=r["kind"], grade=r.get("grade"), created=r["created"],
+        if (r["kind"], r["side"]) not in memo:
+            memo[(r["kind"], r["side"])] = _policy(r["kind"], r["side"])
+        pol = memo[(r["kind"], r["side"])]
+        rows.append(dict(evidence_grade=pol["evidence_grade"], strict_allowed=pol["strict_allowed"],id=r["id"], symbol=r["symbol"], tf=r["tf"], name=r["name"], side=r["side"], kind=r["kind"], grade=r.get("grade"), created=r["created"],
                          entry=r["entry"], stop=r["stop"], targets=r["targets"], state=g.get("state", "WAITING"), r_net=g.get("r_net"), best_target=g.get("best_target", 0),
                          fill_price=g.get("fill_price"), fill_time=g.get("fill_time"), exit_time=g.get("exit_time"), note=g.get("note", ""), story=story(r)))
     return rows
@@ -400,7 +412,12 @@ def record_from_res_into(recs, res, symbol, now):
 
 
 def document(recs, now, added=0, changed=0, errors=(), replay=None):
-    return dict(replay=replay,checked=_iso(now), summary=summary(recs), rows=view(recs), added=added, changed=changed, errors=list(errors),
+    try:
+        import strategy_policy
+        strict = strategy_policy.load()["strict"]
+    except Exception:
+        strict = False
+    return dict(strict_mode=strict, replay=replay, checked=_iso(now), summary=summary(recs), rows=view(recs), added=added, changed=changed, errors=list(errors),
                 method=("Every recommended plan is recorded when shown and graded later against closed bars, whether or not you traded it. "
                         "Limit entries need a tick of penetration, breakouts enter at the next open after a confirming close, a stop wins any same-bar tie, "
                         "gaps exit at the open, the 50/30/20 split with a breakeven stop after target 1 is used, and costs are charged. "

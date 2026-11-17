@@ -303,6 +303,7 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'experiments2' && d.code === 0) { try { return renderExperiments2(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'experiments' && d.code === 0) { try { return renderExperiments(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'lossattr' && d.code === 0) { try { return renderLossAttribution(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The loss attribution could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'scorecard' && d.code === 0) { try { return renderScorecard(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The scorecard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
@@ -792,6 +793,56 @@ function renderResearch(d){
   $('#result').innerHTML = hero + how + '<div class="in-sec">The four strategies</div><div class="rs-grid">' + cards + '</div>' +
     (mlHtml ? '<div class="in-sec">Prediction model</div><div class="rs-grid">' + mlHtml + dataCard + '</div>' : '<div class="rs-grid">' + dataCard + '</div>') + next +
     '<div class="note">' + esc(g.note) + ' Not financial advice.</div><details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 80000)) + '</pre></details>';
+}
+
+function renderExperiments2(d){
+  const g = JSON.parse(d.stdout);
+  const R = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : '';
+  const adopted = g.hypotheses.filter(h => h.decision === 'ADOPTED');
+  const cls = {ADOPTED: 'pass', REJECTED: 'fail', 'INSUFFICIENT SAMPLE': 'wait', BASELINE: 'wait', 'NOT DEMONSTRATED': 'wait'};
+  const gcls = {A: 'pass', B: 'wait', C: 'wait', 'NO TRADE': 'fail'};
+  const h7 = g.hypotheses.find(h => h.id === 'H7');
+  const anyPos = g.hypotheses.some(h => h.phase === 6 && h.id !== 'BASE6' && h.test.mean_r != null && h.test.mean_r > 0);
+  const improv = adopted.filter(x => x.phase !== 7).length;
+  const hero = '<div class="rs-hero ' + (improv ? 'some' : 'none') + '"><div class="big">' + improv + ' of ' + (g.hypotheses.length - 2) + ' proposed improvements passed the pre-registered test' + (anyPos ? '' : '; no stop or exit variant made money on the test period') + '</div><div>' + (adopted.some(x => x.phase === 7) ? 'The existing A/B/C score does weakly predict results (below). ' : '') +
+    'Same discipline as the earlier phases: rules written and committed first, each idea judged once on the last ' + Math.round((1 - g.split.fraction) * 100) + '% of the history (from ' + esc(when(g.split.cut)) + '), corrected for the ' + g.hypotheses_cumulative + ' ideas tried on this data. ' +
+    esc(g.policy) + '.</div><div class="rs-meta"><span class="chip">created ' + esc(when(g.created)) + '</span><span class="chip">test opportunities ' + g.split.test_opportunities + '</span></div></div>';
+  const row = h => '<tr><td><b>' + esc(h.id) + '</b></td><td>' + esc(h.name) + '<div class="sub">' + esc(h.definition) + '</div></td><td>' + (h.train.trades || '') + '</td><td>' + R(h.train.mean_r) + '</td><td>' + (h.test.trades == null ? '' : h.test.trades) + (h.test.skipped ? ' <span class="sub">(' + h.test.skipped + ' skipped, ' + h.test.open_excluded + ' open)</span>' : '') + '</td><td>' + R(h.test.mean_r) + (h.test.band_corrected ? '<div class="sub">corrected band ' + R(h.test.band_corrected[0]) + ' to ' + R(h.test.band_corrected[1]) + '</div>' : '') + '</td><td>' + N(h.test.profit_factor) + '</td><td>' + N(h.test.max_drawdown_r, 1) + 'R</td>' +
+    '<td><span class="rs-state ' + (cls[h.decision] || 'wait') + '">' + esc(h.decision) + '</span><div class="sub">' + h.reasons.map(esc).join('<br>') + '</div></td></tr>';
+  const p6 = g.hypotheses.filter(h => h.phase === 6);
+  const t6 = '<table class="in-t"><tr><th></th><th>Variant</th><th>Train fills</th><th>Train avg</th><th>Test fills</th><th>Test avg per trade</th><th>Profit factor</th><th>Worst drawdown</th><th>Decision</th></tr>' + p6.map(row).join('') + '</table>' +
+    '<div class="sub">R is measured in each variant\'s own stop distance. Entries are identical; only the stop or exit changes. Maximum adverse excursion of trades that won: median ' + N(g.mae.winners.p50) + 'R, 75th percentile ' + N(g.mae.winners.p75) + 'R, 90th percentile ' + N(g.mae.winners.p90) + 'R. Losers: median ' + N(g.mae.losers.p50) + 'R. A stop tighter than ' + N(g.mae.winners.p75) + 'R would have stopped out a quarter of the eventual winners.</div>';
+  const sv = g.score_vs_grade;
+  const t7 = '<div class="rs-card"><h4>Does the existing A/B/C score predict results?</h4><span class="rs-state ' + (h7.decision === 'ADOPTED' ? 'pass' : 'fail') + '">' + (h7.decision === 'ADOPTED' ? 'Yes, weakly' : 'No') + '</span>' +
+    '<div class="sub" style="margin-top:6px">Rank correlation between the plan\'s score and its net result on the test period: ' + (sv.rho == null ? 'n/a' : (sv.rho >= 0 ? '+' : '') + sv.rho.toFixed(3)) + ' (permutation p = ' + N(sv.p_value, 4) + ', needed below ' + N(g.bonferroni_alpha, 4) + '). ' + (h7.decision === 'ADOPTED' ? 'That is a real but small relationship.' : 'That is no detectable relationship.') + '</div>' +
+    '<table class="in-t"><tr><th>Grade the plan was given</th><th>Test trades</th><th>Average result</th></tr>' + Object.entries(sv.by_grade).map(([k, v]) => '<tr><td>' + esc(k) + '</td><td>' + v.trades + '</td><td>' + R(v.mean_r) + '</td></tr>').join('') + '</table>' +
+    '<div class="sub">' + Object.entries(sv.by_grade).map(([k, v]) => 'Grade ' + esc(k) + ' averaged ' + R(v.mean_r)).join(', ') + ' on the test period' + (Object.values(sv.by_grade).some(v => v.mean_r > 0) ? '' : ', so no grade made money after costs') + '. How the grade is built: ' + esc(g.grading_policy.how_the_old_grade_works) + '</div></div>';
+  const strat = '<div class="rs-card"><h4>Evidence grade of each strategy</h4><table class="in-t"><tr><th>Strategy</th><th>Evidence grade</th><th>Train fills / avg</th><th>Test fills / avg</th><th>Probability</th></tr>' +
+    g.strategies.map(s => '<tr><td>' + esc(s.name) + '</td><td><span class="rs-state ' + (gcls[s.grade] || 'wait') + '">' + esc(s.grade) + '</span><div class="sub">' + esc(s.grade_reason) + '</div></td><td>' + s.train.trades + ' / ' + R(s.train.mean_r) + '</td><td>' + s.test.trades + ' / ' + R(s.test.mean_r) + (s.test.band_corrected ? '<div class="sub">corrected band ' + R(s.test.band_corrected[0]) + ' to ' + R(s.test.band_corrected[1]) + '</div>' : '') + '</td><td>' + esc(s.probability) + '</td></tr>').join('') + '</table>' +
+    '<div class="sub">' + esc(g.grading_policy.evidence_grade) + (g.strategies.filter(s => s.test.mean_r > 0 && s.train.mean_r < 0).length ? ' Where a strategy looks positive on the test period but was negative on the earlier period (' + g.strategies.filter(s => s.test.mean_r > 0 && s.train.mean_r < 0).map(s => esc(s.name)).join(', ') + '), the sign is not stable and it does not earn grade A.' : '') + '</div></div>';
+  const dd = g.dedup, ae = dd.every_recommendation, af = dd.first_of_each_opportunity;
+  const dedup = '<div class="rs-card"><h4>Repeated ideas counted once (test period)</h4><table class="in-t"><tr><th></th><th>Trades</th><th>Total cost</th><th>Total net result</th><th>Worst drawdown</th><th>Peak open risk</th><th>Avg per trade</th></tr>' +
+    '<tr><td>Every recommendation as its own trade (' + dd.recommendations.toLocaleString('en-US') + ' recommendations)</td><td>' + ae.trades + '</td><td>' + N(ae.total_cost_r, 0) + 'R</td><td>' + R(ae.total_net_r) + '</td><td>' + N(ae.max_drawdown_r, 0) + 'R</td><td>' + ae.peak_concurrent_r + 'R</td><td>' + R(ae.mean_r) + '</td></tr>' +
+    '<tr><td>First recommendation of each idea (' + dd.opportunities.toLocaleString('en-US') + ' ideas)</td><td>' + af.trades + '</td><td>' + N(af.total_cost_r, 0) + 'R</td><td>' + R(af.total_net_r) + '</td><td>' + N(af.max_drawdown_r, 0) + 'R</td><td>' + af.peak_concurrent_r + 'R</td><td>' + R(af.mean_r) + '</td></tr></table>' +
+    '<div class="sub">Counting each idea once cuts costs, drawdown and simultaneous exposure sharply, but this is plain arithmetic: the average result per trade does not change, so it says nothing about edge.</div></div>';
+  const sb = g.strict_vs_baseline, mm = (m) => m.trades + ' trades, ' + R(m.mean_r) + ', worst drawdown ' + N(m.max_drawdown_r, 0) + 'R';
+  const strict = '<div class="rs-card"><h4>Strict mode versus baseline mode</h4><span class="rs-state wait">' + esc(sb.verdict) + '</span><div class="sub" style="margin-top:6px">Baseline (everything, as today): ' + mm(sb.baseline) + '.<br>Strict (only strategies graded A on the earlier period): ' + mm(sb.strict) + '.' +
+    (sb.strict_strategies.length ? '' : '<br>No strategy qualified, so strict mode would take no trades. That preserves capital, but it is not evidence of better selection.') + '</div>' +
+    '<div class="in-form"><label class="check"><input type="checkbox" id="strictbox"> Strict mode on (allow only strategies graded A)</label> <span class="sub" id="strictmsg"></span></div></div>';
+  $('#result').innerHTML = hero + '<div class="in-sec">Phase 6: stops and exits</div>' + t6 + '<div class="in-sec">Phases 7 to 9</div><div class="rs-grid">' + t7 + strat + dedup + strict + '</div>' +
+    '<div class="note"><b>Not tested:</b> ' + g.not_tested.map(esc).join('; ') + '.</div><div class="note">' + esc(g.caution) + '</div>' +
+    '<details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
+  const box = $('#strictbox');
+  fetch('/api/policy').then(r => r.json()).then(s => { box.checked = !!s.strict; }).catch(() => { $('#strictmsg').textContent = 'Could not read the setting.'; });
+  box.onchange = async () => {
+    try {
+      const r = await fetch('/api/policy', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({strict: box.checked})});
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || 'error');
+      $('#strictmsg').textContent = j.strict ? 'Strict mode is ON: recommendations are allowed only for strategies graded A.' : 'Strict mode is off: baseline behaviour.';
+    } catch (e) { $('#strictmsg').textContent = 'Not saved: ' + e.message; }
+  };
 }
 
 function renderExperiments(d){

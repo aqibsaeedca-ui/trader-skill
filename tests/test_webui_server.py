@@ -292,6 +292,36 @@ class PendingApi(Http):
         self.assertEqual(self.req("POST", "/api/pending/settings", {"action": "get"}, host="evil.example:80")[0], 403)
 
 
-for _name in dir(Http):                                     # PendingApi only adds its own tests; it must not re-run the ones it inherits
-    if _name.startswith("test_") and _name not in PendingApi.__dict__:
-        setattr(PendingApi, _name, None)
+class PolicyApi(Http):
+    """The strict mode setting over HTTP, with the file redirected."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_pol = server.strategy_policy.PATH
+        server.strategy_policy.PATH = os.path.join(self.dir, "strict_mode.json")
+
+    def tearDown(self):
+        server.strategy_policy.PATH = self.saved_pol
+        super().tearDown()
+
+    def test_default_off_toggle_and_reject_junk(self):
+        self.assertEqual(self.req("GET", "/api/policy"), (200, dict(strict=False)))
+        self.assertEqual(self.req("POST", "/api/policy", {"strict": True}), (200, dict(strict=True)))
+        self.assertEqual(self.req("GET", "/api/policy")[1], dict(strict=True))
+        self.assertEqual(self.req("POST", "/api/policy", {"strict": "yes"})[0], 400)
+
+    def test_the_policy_endpoint_is_guarded_like_the_others(self):
+        self.assertEqual(self.req("POST", "/api/policy", {"strict": True}, headers={"Origin": "http://evil.example"})[0], 403)
+        self.assertEqual(self.req("POST", "/api/policy", {"strict": True}, host="evil.example:80")[0], 403)
+        self.assertFalse(server.strategy_policy.load()["strict"])
+
+    def test_the_experiment_commands_exist(self):
+        by = {c["id"]: c for c in server.COMMANDS}
+        for cid in ("scorecard", "recbacktest", "lossattr", "experiments", "experiments2"):
+            self.assertIn(cid, by)
+            self.assertTrue(os.path.exists(os.path.join(ROOT, by[cid]["script"])), cid)
+
+for _cls in (PendingApi, PolicyApi):                          # these only add their own tests; they must not re-run the ones they inherit
+    for _name in dir(Http):
+        if _name.startswith("test_") and _name not in _cls.__dict__:
+            setattr(_cls, _name, None)

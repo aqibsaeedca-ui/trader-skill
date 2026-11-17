@@ -29,6 +29,7 @@ import scorecard as sc  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "trader", "recommendation_backtest.json")
 OPPS = os.path.join(ROOT, "trader", "replay_opportunities.json")
+ALL = os.path.join(ROOT, "trader", "replay_all.json")
 DEFAULT_SYMBOLS = ("GC=F", "BTC-USD")
 MIN_BARS = 60
 
@@ -151,6 +152,12 @@ def run(symbols=DEFAULT_SYMBOLS, every=4, fetch=None, path=None, analyse_bars=No
                 with open(OPPS + ".tmp", "w", encoding="utf-8") as f:
                     json.dump(list(first.values()), f)
                 os.replace(OPPS + ".tmp", OPPS)
+                slim = [dict(id=x["id"], opportunity=x.get("opportunity"), created_ts=x["created_ts"], symbol=x["symbol"], tf=x["tf"], kind=x["kind"], side=x["side"], state=(x.get("result") or {}).get("state"),
+                             fill_time=(x.get("result") or {}).get("fill_time"), exit_time=(x.get("result") or {}).get("exit_time"), r_net=(x.get("result") or {}).get("r_net"),
+                             cost_r=((x["cost"] / (x["result"]["risk"])) if (x.get("result") or {}).get("risk") else None), final=(x.get("result") or {}).get("final")) for x in allrecs]
+                with open(ALL + ".tmp", "w", encoding="utf-8") as f:
+                    json.dump(slim, f)
+                os.replace(ALL + ".tmp", ALL)
         except Exception as e:
             doc["attribution_error"] = str(e)[:200]
     doc["errors"] = errors

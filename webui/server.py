@@ -28,6 +28,7 @@ import orders  # noqa: E402
 import paper  # noqa: E402
 import pending  # noqa: E402
 import portfolio  # noqa: E402
+import strategy_policy  # noqa: E402
 import research  # noqa: E402
 import strategies  # noqa: E402  (same folder; none of these modules can place an order)
 
@@ -65,6 +66,11 @@ COMMANDS = [
          help="Every trade plan the console recommends, for Gold and Bitcoin, is recorded when shown and graded later against what price actually did, "
               "whether or not you took it: would it have won, lost, or never triggered. Shows the right/wrong record with honest bands.",
          script="webui/scorecard.py", fixed=["--json"], view="scorecard", params=[]),
+    dict(id="experiments2", group="Gold", title="Stops, grading and strict mode experiments",
+         help="The pre-registered Phase 6 to 9 tests: stop and exit variants, whether the A/B/C score predicts results, the evidence grade of each strategy, what de-duplicating repeated "
+              "ideas changes, and strict mode versus baseline mode. Shows the saved result; tick re-run for fresh data. Strict mode can be switched on or off on the page.",
+         script="webui/experiments2.py", fixed=["--json"], view="experiments2",
+         params=[P("rerun", "Recompute with the latest data (about 40 seconds)", "check", flag="--rerun")]),
     dict(id="experiments", group="Gold", title="Regime, trend and breakout experiments",
          help="The pre-registered Phase 3 to 5 tests: a nine-class regime classifier with ablation, a higher-timeframe trend filter, a confirmed-reversal filter, and breakout entry modes "
               "and false-breakout filters, each judged once on a held-out test period. Shows the saved result. Run 'Backtest every recommendation' first if you want fresh data, then tick re-run.",
@@ -540,6 +546,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, dict(settings=orders.load_settings(), saved=orders.settings_saved()))
         if path == "/api/paper_orders":
             return self._json(200, pending.paper_view())
+        if path == "/api/policy":
+            return self._json(200, strategy_policy.load())
         if path == "/api/journal":
             ent = journal.load()
             return self._json(200, dict(entries=journal.recent(ent, 40), summary=journal.analyse(ent)))
@@ -557,7 +565,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._json(403, {"error": "bad host"})
         wm = WATCH_PATH.match(self.path)
-        if self.path not in ("/api/run", "/api/portfolio", "/api/journal", "/api/pending/settings", "/api/paper_orders") and not wm:
+        if self.path not in ("/api/run", "/api/portfolio", "/api/journal", "/api/pending/settings", "/api/paper_orders", "/api/policy") and not wm:
             return self._json(404, {"error": "not found"})
         # JSON content type forces a CORS preflight, which we never grant,
         # so other websites cannot trigger runs from the user's browser.
@@ -581,6 +589,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, pending_settings_action(body))
             if self.path == "/api/paper_orders":
                 return self._json(200, paper_action(body))
+            if self.path == "/api/policy":
+                try:
+                    return self._json(200, strategy_policy.save(body.get("strict")))
+                except ValueError as e:
+                    raise BadInput(str(e))
             result = run_command(str(body.get("id", "")), body.get("values") or {})
         except BadInput as e:
             return self._json(400, {"error": str(e)})

@@ -227,7 +227,7 @@ def regime_v2(f, mask=()):
 
 # ---------------------------------------------------------------- statistics --------------------------------------------------------------
 
-def metrics(trades, recommended, boot_seed=7):
+def metrics(trades, recommended, boot_seed=7, alpha=None):
     """trades: list of (time_key, r_net) for filled, final trades. recommended: number of opportunities the variant would have recommended."""
     rs = [r for _, r in trades]
     n = len(rs)
@@ -247,7 +247,8 @@ def metrics(trades, recommended, boot_seed=7):
         means = sorted(sum(rnd.choices(rs, k=n)) / n for _ in range(BOOT))
         pick = lambda q: means[min(len(means) - 1, max(0, int(q * len(means))))]   # noqa: E731
         out["band"] = [pick(0.025), pick(0.975)]
-        out["band_corrected"] = [pick(ALPHA), pick(1 - ALPHA)]
+        a_ = ALPHA if alpha is None else alpha
+        out["band_corrected"] = [pick(a_), pick(1 - a_)]
     return out
 
 
