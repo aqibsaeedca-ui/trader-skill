@@ -303,7 +303,8 @@ async function run(c){
     if (d.view === 'news' && d.code === 0) { try { return renderNews(d); } catch (e) { /* fall back to raw text */ } }
     if (d.view === 'gold' && d.code === 0) { try { return renderGold(d); } catch (e) { console.error(e); } }
     if (d.view === 'research' && d.code === 0) { try { return renderResearch(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The results could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
-    if (d.view === 'experiments2' && d.code === 0) { try { return renderExperiments2(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+    if (d.view === 'experiments3' && d.code === 0) { try { return renderExperiments3(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
+  if (d.view === 'experiments2' && d.code === 0) { try { return renderExperiments2(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'experiments' && d.code === 0) { try { return renderExperiments(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The experiments could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'lossattr' && d.code === 0) { try { return renderLossAttribution(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The loss attribution could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
     if (d.view === 'scorecard' && d.code === 0) { try { return renderScorecard(d); } catch (e) { console.error(e); $('#result').innerHTML = '<pre class="err">The scorecard could not be drawn: ' + esc(e.message) + '</pre><details class="raw"><summary>Raw output</summary><pre>' + esc(d.stdout) + '</pre></details>'; return; } }
@@ -843,6 +844,42 @@ function renderExperiments2(d){
       $('#strictmsg').textContent = j.strict ? 'Strict mode is ON: recommendations are allowed only for strategies graded A.' : 'Strict mode is off: baseline behaviour.';
     } catch (e) { $('#strictmsg').textContent = 'Not saved: ' + e.message; }
   };
+}
+
+function renderExperiments3(d){
+  const g = JSON.parse(d.stdout);
+  const R = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const when = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : '';
+  const cls = {ADOPTED: 'pass', REJECTED: 'fail', 'INSUFFICIENT SAMPLE': 'wait', BASELINE: 'wait'};
+  const adopted = g.hypotheses.filter(h => h.decision === 'ADOPTED');
+  const hero = '<div class="rs-hero ' + (adopted.length ? 'some' : 'none') + '"><div class="big">' + adopted.length + ' of ' + (g.hypotheses.length - 1) + ' session, news and machine-learning filters passed the pre-registered test</div><div>' +
+    'Historical backtest, not a forecast. Rules were committed before this ran; each idea was judged once on the last ' + Math.round((1 - g.split.fraction) * 100) + '% of the history (from ' + esc(when(g.split.cut)) + '), corrected for the ' + g.hypotheses_cumulative +
+    ' ideas tried on this data. Probabilities: ' + esc(g.ml.probability_status) + '.</div><div class="rs-meta"><span class="chip">created ' + esc(when(g.created)) + '</span><span class="chip">test opportunities ' + g.split.test_opportunities + '</span></div></div>';
+  const row = h => '<tr><td><b>' + esc(h.id) + '</b></td><td>' + esc(h.name) + '<div class="sub">' + esc(h.definition) + '</div></td><td>' + (h.train.trades || '') + '</td><td>' + R(h.train.mean_r) + '</td><td>' + (h.test.trades == null ? '' : h.test.trades) + '</td><td>' + R(h.test.mean_r) +
+    (h.test.band_corrected ? '<div class="sub">corrected band ' + R(h.test.band_corrected[0]) + ' to ' + R(h.test.band_corrected[1]) + '</div>' : '') + '</td><td>' + N(h.test.profit_factor) + '</td><td>' + N(h.test.max_drawdown_r, 1) + 'R</td>' +
+    '<td><span class="rs-state ' + (cls[h.decision] || 'wait') + '">' + esc(h.decision) + '</span><div class="sub">' + h.reasons.map(esc).join('<br>') + '</div></td></tr>';
+  const head = '<table class="in-t"><tr><th></th><th>Variant</th><th>Train fills</th><th>Train avg</th><th>Test fills</th><th>Test avg per trade</th><th>Profit factor</th><th>Worst drawdown</th><th>Decision</th></tr>';
+  const ml = g.ml;
+  const mlCard = '<div class="rs-card"><h4>Machine-learning filter diagnostics</h4><div class="sub">Logistic regression on ' + ml.train_used_after_purge + ' training fills (' + ml.purged + ' dropped by the purge and embargo so no training outcome overlaps the test period).</div>' +
+    '<table class="in-t"><tr><th>Measure</th><th>Value</th></tr><tr><td>Test AUC (0.5 = coin flip)</td><td>' + N(ml.test_auc, 3) + '</td></tr><tr><td>Test Brier score</td><td>' + N(ml.test_brier, 4) + '</td></tr><tr><td>Brier score of always guessing the training win rate</td><td>' + N(ml.base_rate_brier, 4) + '</td></tr>' +
+    '<tr><td>Brier skill (positive = better than guessing)</td><td>' + N(ml.brier_skill, 4) + '</td></tr>' + (ml.walk_forward || []).map(f => '<tr><td>Walk-forward fold ' + f.fold + ' AUC (inside the training period)</td><td>' + N(f.auc, 3) + ' on ' + f.test_n + ' fills</td></tr>').join('') + '</table>' +
+    '<div class="sub">Probabilities shown to you: ' + esc(ml.probability_status) + '.</div></div>';
+  const en = g.engine;
+  const trs = Object.entries(en.transitions).map(([k, v]) => esc(k.toLowerCase()) + ' ' + v).join(', ');
+  const engCard = '<div class="rs-card"><h4>Event-driven backtester check</h4><span class="rs-state ' + (en.passed ? 'pass' : 'fail') + '">' + (en.passed ? 'Matches the grader' : 'Disagrees with the grader') + '</span>' +
+    '<div class="sub" style="margin-top:6px">A second simulator that moves every order through a lifecycle (created, pending, triggered, filled, partially closed, then closed, expired, invalidated or still open) in global time order agreed with the scorecard grader on ' + en.identical + ' of ' + en.compared + ' plans (' + N(en.agreement * 100, 2) + '%). The full plan is stored only for the first recommendation of each idea, so the check covers those, not all ' + '17,990 replayed recommendations.' +
+    (en.disagreements.length ? ' Disagreements are listed in the raw data.' : '') + '<br>Lifecycle counts: ' + trs + '.</div></div>';
+  const gt = g.gate, sk = gt.skipped;
+  const gateCard = '<div class="rs-card"><h4>Risk limits replay on the test period</h4><div class="sub">Historical backtest on recorded outcomes. Each trade risks ' + gt.settings.risk_per_trade_pct + '% of equity; at most ' + gt.settings.max_open + ' open, ' + gt.settings.max_aggregate_pct + '% aggregate open risk, one per market and side, daily lockout at ' + gt.settings.daily_lockout_pct + '% loss.</div>' +
+    '<table class="in-t"><tr><th></th><th>Trades</th><th>Total net</th><th>Worst drawdown</th></tr><tr><td>No limits</td><td>' + gt.candidates + '</td><td>' + R(gt.ungated_total_r) + '</td><td></td></tr><tr><td>With limits</td><td>' + gt.taken + '</td><td>' + R(gt.total_r) + ' (' + N(gt.total_pct, 1) + '% of equity)</td><td>' + N(gt.max_drawdown_r, 1) + 'R (' + N(gt.max_drawdown_pct, 1) + '%)</td></tr></table>' +
+    '<div class="sub">Skipped: ' + sk.max_positions + ' by the open-position cap, ' + sk.same_market_side + ' as a repeat of an open position, ' + sk.aggregate_risk + ' by aggregate risk, ' + sk.daily_lockout + ' by the daily lockout. Limits reduce exposure; they do not change the average result per trade.</div></div>';
+  const ss = Object.entries(g.sessions).map(([k, v]) => '<tr><td>' + esc(k) + '</td><td>' + v.trades + '</td><td>' + R(v.mean_r) + '</td></tr>').join('');
+  const sessCard = '<div class="rs-card"><h4>Result by session of creation (descriptive)</h4><table class="in-t"><tr><th>Session (UTC)</th><th>Filled trades</th><th>Avg result</th></tr>' + ss + '</table></div>';
+  $('#result').innerHTML = hero + '<div class="in-sec">Phases 10 and 11: filters</div>' + head + g.hypotheses.map(row).join('') + '</table>' +
+    '<div class="in-sec">Diagnostics, Phase 12 and risk limits</div><div class="rs-grid">' + mlCard + engCard + gateCard + sessCard + '</div>' +
+    '<div class="note"><b>Not tested:</b> ' + g.not_tested.map(esc).join('; ') + '.</div><div class="note">' + esc(g.caution) + '</div>' +
+    '<details class="raw"><summary>Raw data</summary><pre>' + esc(JSON.stringify(g, null, 1).slice(0, 60000)) + '</pre></details>';
 }
 
 function renderExperiments(d){

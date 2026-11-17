@@ -66,6 +66,11 @@ COMMANDS = [
          help="Every trade plan the console recommends, for Gold and Bitcoin, is recorded when shown and graded later against what price actually did, "
               "whether or not you took it: would it have won, lost, or never triggered. Shows the right/wrong record with honest bands.",
          script="webui/scorecard.py", fixed=["--json"], view="scorecard", params=[]),
+    dict(id="experiments3", group="Gold", title="Session, news and machine-learning filter experiments",
+         help="The pre-registered Phase 10 to 12 tests: session and news filters, a purged machine-learning trade filter, an event-driven order-lifecycle backtester checked against the grader, "
+              "and a replay of the risk limits. Historical backtest only. Shows the saved result; tick re-run for fresh data.",
+         script="webui/experiments3.py", fixed=["--json"], view="experiments3",
+         params=[P("rerun", "Recompute with the latest data (about 60 seconds)", "check", flag="--rerun")]),
     dict(id="experiments2", group="Gold", title="Stops, grading and strict mode experiments",
          help="The pre-registered Phase 6 to 9 tests: stop and exit variants, whether the A/B/C score predicts results, the evidence grade of each strategy, what de-duplicating repeated "
               "ideas changes, and strict mode versus baseline mode. Shows the saved result; tick re-run for fresh data. Strict mode can be switched on or off on the page.",
