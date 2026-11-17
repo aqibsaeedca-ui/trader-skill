@@ -312,7 +312,7 @@ def build(recs, bars_by_symbol, events, label, max_rows=40):
         fill_gap=dict(breakout_fills=len(gaps), mean=(sum(gaps) / len(gaps) if gaps else None), worst=(max(gaps) if gaps else None), best=(min(gaps) if gaps else None),
                       note=("A breakout plan is graded as: wait for a bar to CLOSE beyond the entry, then fill at the NEXT bar's open. That open can be above (long) or below "
                             "(short) the planned entry, so a breakout can fill a few dollars away from the plan. This is a modelling rule, not a defect, but the fill is "
-                            "'next open after the confirming close', not 'the planned entry price'. Pullback (limit) plans fill exactly at the entry price.")),
+                            "'next open after the confirming close', not 'the planned entry price'. Pullback (limit) plans fill at the entry price, or at the bar's open when a bar gaps through it (the better price).")),
         audit=dict(checked=len(audits), failed=len(bad_audit), failed_ids=bad_audit[:10],
                    checks=["exit legs sum to 100% of the position", "R recomputed from the exit legs equals the reported R", "the R unit equals the planned entry-to-stop distance",
                            "stop and targets are on the correct sides of the entry", "a limit fill price lies inside its bar's range", "a breakout fill equals its bar's open"]),
