@@ -38,7 +38,7 @@ SETTINGS_FILE = os.path.join(TRADER, "gold_watch.json")
 LOG_FILE = os.path.join(TRADER, "gold_alerts.json")
 
 DEFAULTS = dict(symbol="GC=F", tfs=["15m", "1h", "4h"], near_atr=0.5, poll_min=5, toast=True,
-                intel=True, event_lead_min=30, max_alerts_per_hour=12, extras_cooldown_min=60)
+                intel=True, pending=False, event_lead_min=30, max_alerts_per_hour=12, extras_cooldown_min=60)
 COOLDOWN_MIN = {"15m": 30, "1h": 90, "4h": 240}
 POLLS = (2, 5, 10, 15)
 FRIENDLY = {
@@ -51,7 +51,7 @@ FRIENDLY = {
 
 def defaults(asset):
     """Intelligence alerts default on for gold only, so Bitcoin alerts behave exactly as before unless switched on."""
-    return dict(DEFAULTS, symbol=asset["symbols"][0], intel=(asset["id"] == "gold"))
+    return dict(DEFAULTS, symbol=asset["symbols"][0], intel=(asset["id"] == "gold"), pending=(asset["id"] == "gold"))
 
 
 def files(asset):
@@ -87,6 +87,8 @@ def clean_settings(raw, asset=None):
         s["toast"] = raw["toast"]
     if isinstance(raw.get("intel"), bool):
         s["intel"] = raw["intel"]
+    if isinstance(raw.get("pending"), bool) and asset["id"] == "gold":
+        s["pending"] = raw["pending"]
     for key, lo, hi in (("event_lead_min", 5, 240), ("max_alerts_per_hour", 1, 60), ("extras_cooldown_min", 10, 720)):
         try:
             v = int(raw.get(key, s[key]))
@@ -203,6 +205,11 @@ def evaluate(res, settings, state, now):
     return alerts
 
 
+def intel_events():
+    import macro
+    return macro.load_store()
+
+
 class Watcher:
     def __init__(self, asset=None):
         self.asset = asset or assets.GOLD
@@ -312,6 +319,21 @@ class Watcher:
                     self._save(self.state_file, xs)
                 except (Exception, SystemExit) as e:
                     extra_err = "intelligence alerts unavailable: %s" % str(e)[:160]
+            if settings.get("pending") and self.asset["id"] == "gold":
+                try:                                       # pending-order alerts are optional extras and must never silence the rest
+                    import paper
+                    import pending
+                    import pending_watch
+                    bars = {"15m": res["bars"]["15m"], "60m": res["bars"]["1h"]}
+                    ev = intel_events()
+                    ch = pending.refresh_paper(settings["symbol"], "60m", now=now, bars=bars, events=ev)
+                    d = pending.build(settings["symbol"], "60m", now, bars, events=ev, paper_orders=ch["orders"], audit=[])
+                    with self.lock:
+                        extra = extra + pending_watch.evaluate(d, settings, self.xstate, now, ch.get("audit") or [], paper.live_orders(ch["orders"]))
+                        xs = json.loads(json.dumps(self.xstate))
+                    self._save(self.state_file, xs)
+                except (Exception, SystemExit) as e:
+                    extra_err = (extra_err + "; " if extra_err else "") + "pending-order alerts unavailable: %s" % str(e)[:160]
             with self.lock:
                 new = evaluate(res, settings, self.state, now) + extra
                 self.snap = snapshot(res, settings["tfs"])

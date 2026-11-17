@@ -23,7 +23,7 @@ DEFAULTS = dict(event_lead_min=30, max_alerts_per_hour=12, extras_cooldown_min=6
 
 
 def new_state():
-    return dict(fired={}, live={}, regime=None, sent=[], suppressed=0)
+    return dict(fired={}, live={}, regime=None, sent=[], suppressed=0, pending={})
 
 
 def _iso(ts):
