@@ -76,3 +76,14 @@ adverse sweep (no sweep against the trade in the last 6 H1 bars); no news (no hi
 
 Every hypothesis, its parameters, its TRAIN and TEST results and its decision are written to `trader/experiment_log.json`, including the
 rejected ones. Rejected variants stay in the log.
+
+## Clarifications (added before any experiment was run)
+
+Two sentences above were ambiguous when the code was written. They are resolved here, before any result exists:
+- Phase 4 variant C: "counter-trend" means the plan's own label, which is the bias read from the higher timeframes when the plan was recommended
+  (the plan's trend field equals counter). The H1 bias is then required to agree with the plan side as of the last closed bar, which means the
+  structure has already shifted. A plan whose label is counter but whose H1 bias has not shifted does not pass.
+- Phase 5 filters "breakout distance" and "candle quality" are measured on the confirming bar of the baseline rule (the first closed bar whose
+  close is beyond the level), not at the moment of recommendation. A plan with no confirming bar does not pass. The filters for volatility
+  expansion, adverse sweep and news are measured at the recommendation time.
+- The permutation test for the regime classifier shuffles the regime labels over the same test opportunities 500 times, seeded.
