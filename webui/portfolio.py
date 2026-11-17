@@ -99,6 +99,11 @@ def validate(raw):
     return out
 
 
+def exists(path=None):
+    """Has the book ever been saved? Until then equity is only a default, and risk-based recommendations stay blocked."""
+    return os.path.exists(path or PATH)
+
+
 def load(path=None):
     try:
         with open(path or PATH, encoding="utf-8") as f:
