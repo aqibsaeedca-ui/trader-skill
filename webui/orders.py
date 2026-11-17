@@ -249,7 +249,7 @@ def make_plan(sig, profile, limits, bid, ask, equity, now=None, bar_seconds=3600
                 lots=size["lots"], units=size["units"], fits=size["fits"], risk_currency=size["risk_at_stop"],
                 risk_per_unit=size["risk_per_unit"], cost_per_unit=cpu, signal_ts=sig["decided_t"], strategy=sig["strategy"], signal_id=sig["id"],
                 regime=sig["regime"], expires_bars=sig["expires"], expires_at=sig["decided_t"] + sig["expires"] * bar_seconds,
-                invalidation=sig["invalidation"], invalid_price=sig["meta"].get("invalid_price", stop), note=sig["note"],
+                invalidation=sig["invalidation"], invalid_price=sig["meta"].get("invalid_price", stop), note=sig["note"], atr=sig.get("atr"),
                 distance_from_market=abs(price - (ask if side == "long" else bid)), meta=sig["meta"])
     if not size["fits"]:
         plan["size_problem"] = size["reason"]
