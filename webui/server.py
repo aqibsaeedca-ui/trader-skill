@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assets  # noqa: E402
 import backtester  # noqa: E402
+import command_centre  # noqa: E402
 import gold_watch  # noqa: E402
 import journal  # noqa: E402
 import ml  # noqa: E402
@@ -561,6 +562,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, pending.paper_view())
         if path == "/api/policy":
             return self._json(200, strategy_policy.load())
+        if path == "/api/gold/command-centre":
+            try:
+                return self._json(200, command_centre.build(light="light=1" in query.split("&")))
+            except (Exception, SystemExit) as e:                      # an outage must show as an error, never as a made-up price
+                return self._json(502, {"error": "analysis unavailable: %s" % str(e)[:200]})
         if path == "/api/journal":
             ent = journal.load()
             return self._json(200, dict(entries=journal.recent(ent, 40), summary=journal.analyse(ent)))
@@ -578,7 +584,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             return self._json(403, {"error": "bad host"})
         wm = WATCH_PATH.match(self.path)
-        if self.path not in ("/api/run", "/api/portfolio", "/api/journal", "/api/pending/settings", "/api/paper_orders", "/api/policy") and not wm:
+        if self.path not in ("/api/run", "/api/portfolio", "/api/journal", "/api/pending/settings", "/api/paper_orders", "/api/policy", "/api/gold/command-centre/quote") and not wm:
             return self._json(404, {"error": "not found"})
         # JSON content type forces a CORS preflight, which we never grant,
         # so other websites cannot trigger runs from the user's browser.
@@ -602,6 +608,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, pending_settings_action(body))
             if self.path == "/api/paper_orders":
                 return self._json(200, paper_action(body))
+            if self.path == "/api/gold/command-centre/quote":
+                try:
+                    return self._json(200, command_centre.save_quote(body.get("bid"), body.get("ask")))
+                except ValueError as e:
+                    raise BadInput(str(e))
             if self.path == "/api/policy":
                 try:
                     return self._json(200, strategy_policy.save(body.get("strict")))

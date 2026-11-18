@@ -17,6 +17,8 @@ h1{font-size:16px;margin:0}
 .wrap{display:grid;grid-template-columns:230px 1fr;min-height:calc(100vh - 56px)}
 nav{border-right:1px solid var(--line);padding:10px;background:var(--panel);overflow:auto}
 nav h2{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:14px 6px 4px}
+#ccbody .rs-card,#ccbody details,#ccbody .rs-hero{overflow-x:auto;max-width:100%}
+#ccbody .rs-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
 nav details.ng{margin:0}
 nav details.ng summary{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:10px 6px 2px;cursor:pointer;list-style:none;user-select:none}
 nav details.ng summary::-webkit-details-marker{display:none}
@@ -261,12 +263,12 @@ async function init(){
   commands.forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
   const openByDefault = ['Gold', 'Bitcoin'];
   $('#nav').innerHTML = Object.entries(groups).map(([g, cs]) =>
-    '<details class="ng"' + (openByDefault.includes(g) ? ' open' : '') + '><summary>' + esc(g) + ' <span class="n">' + (cs.length + (g === 'Gold' || g === 'Bitcoin' ? 1 : 0)) + '</span></summary>' + cs.map(c => '<button data-id="' + c.id + '">' + esc(c.title) + '</button>').join('') +
+    '<details class="ng"' + (openByDefault.includes(g) ? ' open' : '') + '><summary>' + esc(g) + ' <span class="n">' + (cs.length + (g === 'Gold' || g === 'Bitcoin' ? 1 : 0) + (g === 'Gold' ? 1 : 0)) + '</span></summary>' + (g === 'Gold' ? '<button data-id="_cc">Gold command centre</button>' : '') + cs.map(c => '<button data-id="' + c.id + '">' + esc(c.title) + '</button>').join('') +
     (g === 'Gold' ? '<button data-id="_alerts">Gold alerts</button>' : '') +
     (g === 'Bitcoin' ? '<button data-id="_btc_alerts">Bitcoin alerts</button>' : '') + '</details>').join('')
     + '<details class="ng"><summary>Data</summary><button data-id="_files">trader/ files</button></details>';
   $('#nav').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.id); });
-  show(location.hash.slice(1) || commands[0].id);
+  show(location.hash.slice(1) || '_cc');
 }
 
 function field(p){
@@ -284,6 +286,7 @@ function show(id){
   document.querySelectorAll('nav button').forEach(b => { const on = b.dataset.id === id; b.classList.toggle('on', on); if (on && b.parentElement.tagName === 'DETAILS') b.parentElement.open = true; });
   history.replaceState(null, '', '#' + id);
   if (alertTimer) { clearInterval(alertTimer); alertTimer = null; }
+  if (id === '_cc') return showCC();
   if (id === '_alerts') return showAlerts('gold');
   if (id === '_btc_alerts') return showAlerts('btc');
   if (id === '_files') return showFiles();
@@ -1489,6 +1492,81 @@ function beep(){
 function timeAgo(sec){
   const m = Math.round((Date.now() / 1000 - sec) / 60);
   return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
+}
+
+let cc = null;
+function showCC(){
+  $('#main').innerHTML = '<div class="card"><h3>GOLD TRADING COMMAND CENTRE</h3><p>One analysis, one decision. Signal only: nothing here places an order. The decision comes from hard gates; if data, the broker quote, news, evidence or account risk are missing, the answer is NO TRADE.</p>' +
+    '<div class="rs-meta"><button class="run" id="ccgo" type="button">ANALYSE GOLD &amp; GENERATE PLAN</button><span class="chip" id="ccstamp">not analysed yet</span></div><div id="ccbody"></div></div>';
+  $('#ccgo').onclick = () => ccLoad(false);
+  ccLoad(true);
+  alertTimer = setInterval(() => { if ($('#ccbody')) ccLoad(true); }, 30000);
+}
+async function ccLoad(light){
+  const btn = $('#ccgo');
+  if (!light) { btn.disabled = true; btn.textContent = 'Analysing…'; }
+  try {
+    const r = await fetch('/api/gold/command-centre' + (light ? '?light=1' : ''));
+    const d = await r.json();
+    if (!r.ok) { $('#ccbody').innerHTML = '<div class="note err"><b>Analysis unavailable.</b> ' + esc(d.error || 'error') + ' No plan can be issued without data.</div>'; return; }
+    if (light && cc && !cc.light) { cc = Object.assign({}, cc, {market: Object.assign({}, cc.market, d.market), session: d.session, news: d.news, data: d.data, created: d.created}); }
+    else cc = d;
+    $('#ccstamp').textContent = (cc.light ? 'live data' : 'analysed') + ' ' + String(cc.created).replace('T', ' ').slice(0, 19) + ' UTC';
+    $('#ccbody').innerHTML = renderCC(cc);
+    const q = $('#ccquote'); if (q) q.onsubmit = ccQuote;
+  } catch (e) { $('#ccbody').innerHTML = '<div class="note err">Could not reach the console: ' + esc(e.message) + '</div>'; }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = 'ANALYSE GOLD &amp; GENERATE PLAN'; } }
+}
+async function ccQuote(e){
+  e.preventDefault();
+  try {
+    const r = await fetch('/api/gold/command-centre/quote', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({bid: $('#ccbid').value, ask: $('#ccask').value})});
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'error');
+    ccLoad(false);
+  } catch (err) { $('#ccqmsg').textContent = 'Not saved: ' + err.message; }
+}
+function renderCC(d){
+  const N = (v, dp = 2) => v == null ? 'n/a' : Number(v).toFixed(dp);
+  const R = v => v == null ? 'n/a' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + 'R';
+  const hm = t => t ? String(t).replace('T', ' ').slice(0, 16) + ' UTC' : 'n/a';
+  const m = d.market, q = m.quote, s = d.session, n = d.news;
+  const qline = q.status === 'ok' ? 'Bid ' + N(q.bid) + ' / Ask ' + N(q.ask) + ', spread ' + N(q.spread) + ', ' + esc(q.source) + ', quote time ' + hm(q.time) :
+    '<b>' + esc(q.status.toUpperCase()) + ':</b> ' + esc(q.message);
+  const s1 = '<div class="rs-card"><h4>1. Gold market overview</h4><div class="sub">' + qline + '</div><table class="in-t">' +
+    '<tr><td>Research price (GC=F futures, delayed, not executable)</td><td>' + N(m.research_price) + ' at ' + hm(m.research_time) + '</td></tr>' +
+    '<tr><td>Day change</td><td>' + (m.daily_change >= 0 ? '+' : '−') + N(Math.abs(m.daily_change)) + ' (' + N(m.daily_change_pct) + '%), high ' + N(m.day_high) + ', low ' + N(m.day_low) + '</td></tr>' +
+    '<tr><td>Previous day / week</td><td>' + N(m.prev_day.high) + ' / ' + N(m.prev_day.low) + ' ; ' + N(m.prev_week.high) + ' / ' + N(m.prev_week.low) + '</td></tr>' +
+    (m.atr != null ? '<tr><td>H1 trend, ATR, volatility</td><td>' + esc(String(m.h1_trend).replace(/_/g, ' ')) + ', ATR ' + N(m.atr) + ', volatility ' + esc(m.volatility) + '</td></tr>' : '') +
+    '<tr><td>Data</td><td>' + (d.data.ok ? 'fresh' : '<b>' + esc(d.data.message) + '</b>') + ' (last 1-hour bar ' + hm(d.data.last_bar) + ')</td></tr></table>' +
+    '<form id="ccquote" class="in-form"><span class="sub">Type a broker quote (paper use; it expires after 30 seconds):</span> <input id="ccbid" size="9" placeholder="bid"> <input id="ccask" size="9" placeholder="ask"> <button type="submit">Save quote</button> <span class="sub" id="ccqmsg"></span></form></div>';
+  const c = s.classification, cur = s.current;
+  const s2 = '<div class="rs-card"><h4>2. Trading session</h4><div class="sub"><b>' + esc(c.label) + '</b> (UTC ' + esc(s.utc.replace('T', ' ').slice(0, 16)) + '; Pakistan time ' + esc(s.pakistan_time) + ')' + (s.minutes_to_session_end != null ? ', ' + s.minutes_to_session_end + ' min left in this window' : '') + '</div><table class="in-t">' +
+    (cur ? '<tr><td>Session so far</td><td>open ' + N(cur.open) + ', high ' + N(cur.high) + ', low ' + N(cur.low) + ', range ' + N(cur.high - cur.low) + '</td></tr>' : '<tr><td>Session so far</td><td>n/a</td></tr>') +
+    '<tr><td>Condition</td><td>' + esc(String(m.regime || 'run the analysis').replace(/_/g, ' ')) + '</td></tr><tr><td>Session VWAP</td><td>unavailable: no reliable volume in this data</td></tr><tr><td>Spread by session</td><td>unavailable</td></tr></table></div>';
+  const nx = n.next;
+  const s3 = '<div class="rs-card"><h4>3. Economic news</h4><span class="rs-state ' + (n.status === 'CLEAR' ? 'pass' : 'fail') + '">NEWS ' + esc(n.status) + '</span><div class="sub" style="margin-top:6px">' + esc(n.message) + '</div>' +
+    (nx ? '<table class="in-t"><tr><td>Next high-impact event</td><td><b>' + esc(nx.name) + '</b> at ' + hm(nx.utc) + ', in ' + nx.minutes + ' min</td></tr><tr><td>Forecast / previous / actual</td><td>' + [nx.forecast, nx.previous, nx.actual].map(v => v == null ? 'not available' : esc(v)).join(' / ') + '</td></tr><tr><td>Source, last update</td><td>' + esc(nx.source) + ', ' + hm(nx.updated) + '</td></tr></table>' : '<div class="sub">No high-impact event stored in the next 48 hours.</div>') +
+    '<div class="sub">Block window: ' + n.buffers.before_minutes + ' min before to ' + n.buffers.after_minutes + ' min after a high-impact event (' + esc(n.buffers.basis) + '). Gold fixes: ' + esc(n.lbma.am) + ' and ' + esc(n.lbma.pm) + '. ' + esc(n.headlines) + '</div></div>';
+  let s4 = '<div class="rs-card"><h4>4. Market structure and key levels</h4><div class="sub">Run the analysis to load this section.</div></div>', s5 = '<div class="rs-card"><h4>5. Strategy intelligence</h4><div class="sub">Run the analysis to load this section.</div></div>', s6 = '', why = '';
+  if (d.final) {
+    const st = d.structure, lv = d.levels;
+    const row = l => '<tr><td>' + N(l.price) + '</td><td>' + esc(l.side) + ', ' + l.timeframes.join('+') + '</td><td>' + N(l.distance) + ' (' + N(l.distance_atr, 1) + ' ATR)</td><td>' + esc(l.confirmation) + '</td><td>' + esc(l.invalidation) + '</td></tr>';
+    s4 = '<div class="rs-card"><h4>4. Market structure and key levels</h4><div class="sub">H4 <b>' + esc(st.h4) + '</b>, H1 <b>' + esc(st.h1) + '</b>, M15 <b>' + esc(st.m15) + '</b>. Change of character in the last 12 H1 bars: ' + (st.change_of_character_recent ? 'yes' : 'no') + '; break of structure: ' + (st.break_of_structure_recent ? 'yes' : 'no') + '.</div>' +
+      '<table class="in-t"><tr><th>Price</th><th>Type, timeframes</th><th>Distance</th><th>Confirmation</th><th>Invalidation</th></tr>' + lv.resistance.slice().reverse().map(row).join('') + lv.support.map(row).join('') + '</table>' +
+      '<div class="sub">Previous day ' + N(lv.prev_day.high) + ' / ' + N(lv.prev_day.low) + '. VWAP: ' + esc(lv.vwap.reason) + '. Not calculated: ' + lv.not_calculated.join(', ') + '.</div></div>';
+    const sg = d.strategies;
+    s5 = '<div class="rs-card"><h4>5. Strategy intelligence</h4><div class="sub"><b>Selected: ' + esc(sg.selected || 'none') + '.</b> ' + esc(sg.rejected_reason) + '</div><table class="in-t"><tr><th>Engine candidate</th><th>Chart</th><th>Distance</th><th>Evidence grade</th><th>Test average</th></tr>' +
+      sg.engine_candidates.map(p => '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.timeframe) + '</td><td>' + N(p.dist_atr, 1) + ' ATR</td><td>' + esc(p.evidence.grade) + '</td><td>' + (p.evidence.test_mean_r == null ? 'n/a' : R(p.evidence.test_mean_r) + ' on ' + p.evidence.test_trades) + '</td></tr>').join('') + '</table>' +
+      '<details><summary>Documented trader strategies (' + sg.library.length + ')</summary><table class="in-t"><tr><th></th><th>Strategy</th><th>Status</th><th>Evidence</th><th>Note</th></tr>' + sg.library.map(x => '<tr><td>' + esc(x.id) + '</td><td>' + esc(x.name) + '<div class="sub">' + esc(x.author) + '</div></td><td>' + esc(x.status) + '</td><td>' + esc(x.evidence) + '</td><td>' + esc(x.note) + '</td></tr>').join('') + '</table></details></div>';
+    const f = d.final, dcls = {BUY: 'pass', SELL: 'fail', WAIT: 'wait', 'NO TRADE': 'wait'};
+    const plan = (f.decision === 'BUY' || f.decision === 'SELL') ? '<table class="in-t"><tr><td>Instrument / session</td><td>' + esc(f.instrument) + ' / ' + esc(f.session) + '</td></tr><tr><td>Strategy</td><td>' + esc(f.strategy) + '</td></tr><tr><td>Entry</td><td>' + esc(f.entry_type) + ' at ' + N(f.entry) + '</td></tr><tr><td>Stop loss</td><td>' + N(f.stop) + '</td></tr><tr><td>Targets</td><td>' + [f.tp1, f.tp2, f.tp3].filter(x => x != null).map(x => N(x)).join(' / ') + '</td></tr><tr><td>Net reward / risk</td><td>' + N(f.rr_net) + '</td></tr><tr><td>Lot size / maximum planned loss</td><td>' + N(f.lots, 2) + ' lots / ' + N(f.max_loss) + '</td></tr><tr><td>Status / expires</td><td>' + esc(f.signal_status) + ' / ' + hm(f.expires_at) + '</td></tr><tr><td>Expected net return</td><td>' + (f.expected_net_return == null ? 'not supported by out-of-sample evidence' : R(f.expected_net_return)) + ' (evidence ' + esc(f.evidence_quality) + ')</td></tr><tr><td>Invalidation</td><td>' + esc(f.invalidation) + '</td></tr></table>' : '';
+    s6 = '<div class="rs-hero none"><div class="big">6. Final trade plan: <span class="rs-state ' + (dcls[f.decision] || 'wait') + '">' + esc(f.decision) + '</span></div><div>' + (f.reasons.length ? f.reasons.map(esc).join('<br>') : '') + '</div>' + plan + '<div class="rs-meta"><span class="chip">SIGNAL ONLY</span><span class="chip">live execution disabled</span></div></div>';
+    const gc = {pass: 'pass', fail: 'fail', unknown: 'fail', wait: 'wait', skip: 'wait'};
+    why = '<details><summary><b>WHY THIS DECISION?</b></summary><table class="in-t"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>' + d.gates.map(g => '<tr><td>' + esc(g.name) + (g.hard ? '' : ' <span class="sub">(soft)</span>') + '</td><td><span class="rs-state ' + gc[g.status] + '">' + esc(g.status.toUpperCase()) + '</span></td><td>' + esc(g.detail) + '</td></tr>').join('') + '</table>' +
+      (d.research_candidate ? '<div class="note"><b>Research candidate (NOT a plan):</b> ' + esc(d.research_candidate.name) + ' on the ' + esc(d.research_candidate.timeframe) + ' chart, entry ' + N(d.research_candidate.entry) + ', stop ' + N(d.research_candidate.stop) + ', targets ' + d.research_candidate.targets.map(x => N(x)).join(' / ') + '. ' + esc(d.research_candidate.note) + '</div>' : '') +
+      '<div class="sub">Account: equity ' + (d.portfolio.equity_entered ? N(d.portfolio.equity) : 'not entered') + ', ' + d.portfolio.positions + ' open, ' + d.portfolio.pending + ' pending. Limits: ' + d.portfolio.limits.risk_pct + '% per setup, ' + d.portfolio.limits.max_aggregate_risk_pct + '% aggregate, ' + d.portfolio.limits.daily_loss_pct + '% daily lockout. Sources: research ' + esc(d.sources.research) + '; executable ' + esc(d.sources.executable) + '; news ' + esc(d.sources.news) + '.</div></details>';
+  }
+  return '<div class="rs-grid">' + s1 + s2 + s3 + '</div>' + '<div class="rs-grid">' + s4 + s5 + '</div>' + s6 + why + '<div class="note">' + esc(d.caution || 'Signal only. Not financial advice.') + '</div>';
 }
 
 function showAlerts(asset){

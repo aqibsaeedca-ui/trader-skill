@@ -323,7 +323,31 @@ class PolicyApi(Http):
             self.assertIn(cid, by)
             self.assertTrue(os.path.exists(os.path.join(ROOT, by[cid]["script"])), cid)
 
-for _cls in (PendingApi, PolicyApi):                          # these only add their own tests; they must not re-run the ones they inherit
+class CommandCentreApi(Http):
+    """The broker quote endpoint, with the quote file redirected. The analysis endpoint needs the network and is covered by injected tests."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_q = server.command_centre.QUOTE
+        server.command_centre.QUOTE = os.path.join(self.dir, "broker_quote.json")
+
+    def tearDown(self):
+        server.command_centre.QUOTE = self.saved_q
+        super().tearDown()
+
+    def test_quote_is_validated_and_guarded(self):
+        self.assertEqual(self.req("POST", "/api/gold/command-centre/quote", {"bid": 2001, "ask": 2000})[0], 400)
+        self.assertEqual(self.req("POST", "/api/gold/command-centre/quote", {"bid": "x", "ask": 1})[0], 400)
+        self.assertEqual(self.req("POST", "/api/gold/command-centre/quote", {"bid": 2000, "ask": 2000.3}, headers={"Origin": "http://evil.example"})[0], 403)
+        self.assertFalse(os.path.exists(server.command_centre.QUOTE))
+        code, body = self.req("POST", "/api/gold/command-centre/quote", {"bid": 2000, "ask": 2000.3})
+        self.assertEqual((code, body["status"]), (200, "ok"))
+
+    def test_the_page_and_endpoint_are_part_of_the_console(self):
+        self.assertTrue(callable(server.command_centre.build))
+
+
+for _cls in (PendingApi, PolicyApi, CommandCentreApi):                          # these only add their own tests; they must not re-run the ones they inherit
     for _name in dir(Http):
         if _name.startswith("test_") and _name not in _cls.__dict__:
             setattr(_cls, _name, None)
