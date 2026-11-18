@@ -169,18 +169,13 @@ def stats(bars, events=None, volumes=None):
         first_open, last_close = bs[0][4], bs[-1][3]
         path = sum(abs(b[3] - b[4]) for b in bs) or 1e-12
         moves = [b[3] - b[4] for b in bs]
-        ac = None
-        if len(moves) >= 4:
-            m = sum(moves) / len(moves)
-            den = sum((x - m) ** 2 for x in moves)
-            ac = (sum((moves[i] - m) * (moves[i - 1] - m) for i in range(1, len(moves))) / den) if den > 0 else None
-        s = by.setdefault(it["session"], dict(instances=0, ranges=[], efficiency=[], autocorr=[], displacement=[], breaks_prior=0, reversals=0, comparable=0))
+        s = by.setdefault(it["session"], dict(instances=0, ranges=[], efficiency=[], moves=[], pairs=[], displacement=[], breaks_prior=0, reversals=0, comparable=0))
+        s["moves"].extend(moves)                                   # pooled over every instance of the session, so short instances do not bias the lag-1 estimate
+        s["pairs"].extend((moves[i - 1], moves[i]) for i in range(1, len(moves)))
         s["instances"] += 1
         s["ranges"].append(hi - lo)
         s["efficiency"].append(abs(last_close - first_open) / path)
         s["displacement"].append((last_close - first_open) / (hi - lo) if hi > lo else 0.0)
-        if ac is not None:
-            s["autocorr"].append(ac)
         pr = prev_range.get(it["session"])
         if pr:
             s["comparable"] += 1
@@ -193,12 +188,15 @@ def stats(bars, events=None, volumes=None):
     avg = lambda v: (sum(v) / len(v)) if v else None   # noqa: E731
     for name, s in by.items():
         n = s["instances"]
-        ae, ac = avg(s["efficiency"]), avg(s["autocorr"])
+        ae = avg(s["efficiency"])
+        m = avg(s["moves"]) or 0.0
+        den = sum((x - m) ** 2 for x in s["moves"])
+        ac = (sum((a - m) * (b - m) for a, b in s["pairs"]) / den) if den > 0 and len(s["pairs"]) >= 20 else None
         if n < 30:
             character = "INSUFFICIENT EVIDENCE"
-        elif ac is not None and ac > 0.05 and ae is not None and ae > 0.3:
+        elif ac is not None and ac > 2.0 / len(s["pairs"]) ** 0.5:          # beyond about two standard errors of a no-structure series
             character = "momentum-leaning (descriptive)"
-        elif ac is not None and ac < -0.05:
+        elif ac is not None and ac < -2.0 / len(s["pairs"]) ** 0.5:
             character = "mean-reversion-leaning (descriptive)"
         else:
             character = "no clear character (descriptive)"
