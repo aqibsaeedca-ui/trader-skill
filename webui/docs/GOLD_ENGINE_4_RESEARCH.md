@@ -96,7 +96,7 @@ Current feasible work with no new data: the daily Turtle/Donchian and momentum b
 | --- | --- | --- | --- |
 | 1 | Audit and loss diagnosis | none | **Done (this document)** |
 | 2 | Research register | none | **Done, with 2 sources unverified (captcha) and 2 only partly read** |
-| 3 | Timezone-correct session engine: sessions, DST, ranges, VWAP where volume exists, event windows | Approve `pip install tzdata`, or accept rule-coded DST | Next |
+| 3 | Timezone-correct session engine: sessions, DST, ranges, VWAP where volume exists, event windows | Approve `pip install tzdata`, or accept rule-coded DST | **Done 2026-11-18** (`tzdata` 2026.6 installed with approval; `webui/gold_sessions.py`, page "Gold sessions" in Gold lab). Not yet built: session VWAP (no volume in this data), spread and breakout-frequency by session beyond the descriptive table |
 | 4 | Strategy modules S1 to S9 as pure, tested functions | none to write; data to run | After 3 |
 | 5 | Broker-aware backtester (spread by hour, slippage, commission, swap, min stop and volume) | XAUUSD 1-minute data with spread | Blocked on data |
 | 6 | Session-by-session research, pre-registered | Same data | Blocked on data |
