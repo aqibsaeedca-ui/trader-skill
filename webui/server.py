@@ -71,6 +71,11 @@ COMMANDS = [
          help="One dashboard in eight sections (strategy health, loss diagnostics, signal quality, opportunity ranking, execution quality, profitability comparison, capital protection, "
               "optimisation history) built from the saved results of every earlier test. It runs no new experiment, and every figure is labelled historical backtest or live record.",
          script="webui/profitability.py", fixed=["--json"], view="profit", params=[]),
+    dict(id="goldrebuild", group="Gold lab", title="Gold rebuild results",
+         help="The pre-registered backtest of the two kept Gold strategy families (trend continuation, structural rejection) against the archived original engine on identical dates and costs. "
+              "Shows the saved result; tick re-run for fresh data.",
+         script="webui/gold_core.py", fixed=["--json"], view="goldrebuild",
+         params=[P("rerun", "Recompute with the latest data (about 10 seconds). Note: a re-run adds a new entry to the experiment log.", "check", flag="--rerun")]),
     dict(id="sessions", group="Gold lab", title="Gold sessions",
          help="Which gold session is active now (Asian, London, New York, overlap, post-news, transition, closed), the daylight-saving-correct schedule for Tokyo, London, New York and Karachi, "
               "the session ranges so far, and descriptive per-session statistics. No spread or volume is shown because this data has none.",

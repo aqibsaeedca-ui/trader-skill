@@ -18,6 +18,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gold_core  # noqa: E402
 import gold_sessions as gs  # noqa: E402
 import macro  # noqa: E402
 import marketdata as md  # noqa: E402
@@ -182,10 +183,68 @@ def evidence_for(kind, side):
     return out
 
 
+def adapt_core(core, result):
+    """One gold_core signal as a candidate for the decision engine. Distances (stop, targets) are kept as OFFSETS from the entry, because absolute GC=F levels are
+    futures prices and are never copied onto XAUUSD."""
+    if core is None:
+        return None
+    ref, stop = core["ref_close"], core["stop"]
+    dist = abs(ref - stop)
+    sg = 1 if core["side"] == "long" else -1
+    edge = core.get("opp_edge")
+    tp1 = abs(edge - ref) if (core["exit"] == "structure" and edge is not None) else 2.0 * dist
+    h = next((x for x in (result or {}).get("hypotheses", []) if x["id"] == core["strategy"]), None)
+    ev = dict(grade="A" if core["eligible"] else "C", quality="Validated" if core["eligible"] else "Insufficient",
+              reason=("validated on the development window and confirmed on the holdout" if core["eligible"] else
+                      ("%s on the development window: %s" % (h["decision"], "; ".join(h["reasons"])) if h else "no backtest result is saved yet")))
+    if h and h["development"].get("trades"):
+        d = h["development"]
+        ev.update(test_trades=d["trades"], test_mean_r=d.get("mean_r"), band=d.get("band_corrected"))
+    return dict(name="%s (%s)" % (core["name"], core["strategy"]), strategy=core["strategy"], family=core["family"], side=core["side"], kind="market", market=True, tf="1h", dist_atr=0.0,
+                stop_distance=dist, tp1_distance=tp1, exit=core["exit"], atr=core["atr"], ref_close=ref, sign=sg, evidence=ev, entry=ref, stop=stop, entry_zone=[ref, ref],
+                targets=[dict(price=ref + sg * tp1)], cancel="Cancel if the next H1 bar does not open in time or if an H1 close goes beyond the stop distance. The signal is valid for one bar only.")
+
+
+def size_market(p, quote, equity, profile, limits):
+    """A MARKET plan from the broker quote: entry at the executable ask (long) or bid (short), stop and target as offsets from it."""
+    if quote["status"] != "ok":
+        return None
+    tick = profile["tick_size"]
+    long = p["side"] == "long"
+    sg = 1 if long else -1
+    entry = quote["ask"] if long else quote["bid"]
+    stop = orders.round_to_tick(entry - sg * p["stop_distance"], tick, "down" if long else "up")
+    tp1 = orders.round_to_tick(entry + sg * p["tp1_distance"], tick, "down" if long else "up")
+    c = risk.costs(spread=quote["spread"], slippage=profile["slippage"], commission_per_lot=profile["commission_per_lot"])
+    spec = orders.spec_of(profile)
+    cpu = risk.round_trip_cost_per_unit(c, spec)
+    plan = dict(order_type="BUY MARKET" if long else "SELL MARKET", entry=entry, stop=stop, tp1=tp1, tp2=None, tp3=None, cost_per_unit=cpu, spread=quote["spread"])
+    try:
+        rr = risk.net_reward_risk(p["side"], entry, stop, tp1, cpu)
+        plan.update(rr_net=rr["net"], rr_gross=rr["gross"])
+    except ValueError as e:
+        plan.update(rr_net=None, rr_problem=str(e))
+    errs = []
+    d = orders.min_distance(profile)
+    if abs(entry - stop) < d:
+        errs.append("stop is closer than the broker's minimum stop distance %.2f" % d)
+    if abs(tp1 - entry) < d:
+        errs.append("target is closer than the broker's minimum stop distance %.2f" % d)
+    if equity and equity > 0:
+        sz = risk.position_size(equity, limits["risk_pct"], entry, stop, spec, c)
+        plan.update(lots=sz["lots"], units=sz["units"], fits=sz["fits"], max_loss=sz["risk_at_stop"], size_problem=sz["reason"])
+    else:
+        plan.update(lots=None, units=None, fits=False, max_loss=None, size_problem="account equity has not been entered")
+    plan.update(broker_errors=errs, broker_notes=["Stop and target are distances from the executable entry; absolute GC=F structure levels are not copied to XAUUSD. Check the levels on the broker chart."])
+    return plan
+
+
 def size_plan(p, quote, equity, profile, limits):
     """Executable numbers from the broker quote and contract data. Returns None when they cannot be calculated reliably."""
     if quote["status"] != "ok":
         return None
+    if p.get("market"):
+        return size_market(p, quote, equity, profile, limits)
     tick = profile["tick_size"]
     long = p["side"] == "long"
     typ = ("BUY LIMIT" if long else "SELL LIMIT") if p["kind"] == "pullback" else ("BUY STOP" if long else "SELL STOP")
@@ -234,14 +293,14 @@ def decide(c):
     g.append(_g("direction", "H4 and H1 direction agree", "wait" if conflict else "pass", "H4 %s, H1 %s." % (h4, h1) + (" They conflict." if conflict else ""), hard=False))
     cand = c.get("candidate")
     if cand is None:
-        g.append(_g("candidate", "A candidate setup is near the market", "wait", "No plan within reach of the current price.", hard=False))
+        g.append(_g("candidate", "A Gold strategy has a signal on the latest closed bar", "wait", "No Gold strategy has a signal on the latest closed H1 bar.", hard=False))
         for gid, nm in (("evidence", "Strategy has positive validated net expectancy"), ("confirmation", "Entry confirmed on closed bars"), ("execution", "Spread, stop distance and net reward to risk"),
                         ("account", "Fits the account risk budget"), ("duplicate", "Not a duplicate")):
             g.append(_g(gid, nm, "skip", "No candidate to check.", hard=False))
     else:
         with_trend = h1 in ("neutral", None) or (cand["side"] == "long") == (h1 == "bullish")
-        g.append(_g("candidate", "A candidate setup is near the market", "pass" if with_trend else "wait",
-                    "%s on the %s chart, %.1f ATR from price%s." % (cand["name"], cand["tf"], cand["dist_atr"], "" if with_trend else "; it trades against the H1 direction"), hard=False))
+        g.append(_g("candidate", "A Gold strategy has a signal on the latest closed bar", "pass" if with_trend else "wait",
+                    "%s on the %s chart%s." % (cand["name"], cand["tf"], "" if with_trend else "; it trades against the H1 direction"), hard=False))
         ev = c["evidence"]
         g.append(_g("evidence", "Strategy has positive validated net expectancy", "pass" if ev["grade"] == "A" else "fail",
                     "Evidence grade %s: %s" % (ev["grade"], ev["reason"])))
@@ -373,20 +432,20 @@ def build(now=None, light=False, bars=None, res=None, events=None, quote=None, s
                      change_of_character_recent=bool(snap.get("last_choch") is not None and len(h1c) - 1 - snap["last_choch"] <= 12),
                      break_of_structure_recent=bool(snap.get("last_bos") is not None and len(h1c) - 1 - snap["last_bos"] <= 12), sweep=snap.get("sweep"),
                      swing_high=snap.get("swing_high"), swing_low=snap.get("swing_low"))
-    levels = dict(resistance=[lvl(l, "resistance") for l in rs[:3]], support=[lvl(l, "support") for l in sup[:3]], session_ranges=sess.get("previous_ranges"), current_session=sess.get("current"),
+    ranked = sorted([lvl(l, "resistance") for l in rs[:3]] + [lvl(l, "support") for l in sup[:3]], key=lambda x: (-len(x["timeframes"]), x["distance"]))[:3]
+    levels = dict(top=ranked, session_ranges=sess.get("previous_ranges"), current_session=sess.get("current"),
                   vwap=dict(value=None, reason="no reliable volume in this data, so session VWAP is unavailable"), prev_day=market["prev_day"], prev_week=market["prev_week"],
                   not_calculated=["fair-value gaps", "order blocks"])
-    cands, merged = candidates(res)
-    maxd = max(0.1, orders.DEFAULT_LIMITS["max_distance_atr"])
-    near = [p for p in cands if p["dist_atr"] <= maxd]
-    cand = near[0] if near else None
+    core_result = gold_core.load_result()
+    core, core_info = gold_core.live_candidate(bars["60m"], now, core_result)        # at most ONE opportunity, from strategies A and B only
+    cand = adapt_core(core, core_result)
     cfg = settings or orders.load_settings()
     profile, limits = cfg["profile"], dict(cfg["limits"], **CC_LIMITS)
     state = pf.load() if state is None else state
     known = pf.exists() if equity_known is None else equity_known
     plan = size_plan(cand, quote, state["equity"] if known else None, profile, limits) if cand else None
-    ev = evidence_for(cand["kind"], cand["side"]) if cand else None
-    confirmed = confirmation(cand, bars["15m"], now) if cand else (False, "")
+    ev = cand["evidence"] if cand else None
+    confirmed = (True, "the signal bar is a closed H1 bar (validated version uses H4 and H1 only; M15 and M5 are context, not tested)") if cand else (False, "")
     account = dict(allowed=True, reasons=[])
     if cand:
         syms = {SYMBOL, profile["symbol"].upper()}
@@ -407,8 +466,8 @@ def build(now=None, light=False, bars=None, res=None, events=None, quote=None, s
     final = dict(decision=out["decision"], instrument=profile["symbol"], session=sess["classification"]["label"], mode="SIGNAL ONLY", reasons=out["reasons"], blocked_by=out["blocked_by"])
     if out["decision"] in ("BUY", "SELL"):
         sig_state = "Confirmed" if confirmed[0] else "Awaiting confirmation"
-        stp = sc.STEP["15m" if cand["tf"] == "15m" else "1h"] * sc.EXPIRY["15m" if cand["tf"] == "15m" else "1h"]
-        final.update(strategy="%s (%s chart)" % (cand["name"], cand["tf"]), entry_type=plan["order_type"], entry=plan["entry"], stop=plan["stop"], tp1=plan["tp1"], tp2=plan["tp2"], tp3=plan["tp3"],
+        stp = 3600                                         # a market signal on a closed H1 bar is valid for the next bar only
+        final.update(strategy=cand["name"], entry_type=plan["order_type"], entry=plan["entry"], stop=plan["stop"], tp1=plan["tp1"], tp2=plan["tp2"], tp3=plan["tp3"],
                      rr_net=plan["rr_net"], lots=plan["lots"], max_loss=plan["max_loss"], signal_status=sig_state, expected_net_return=ev.get("test_mean_r"), evidence_quality=ev["quality"],
                      expires_at=md.utc_iso(now + stp), invalidation=cand["cancel"])
         record_plan(dict(decision=out["decision"], entry=plan["entry"], stop=plan["stop"], expires_at=now + stp, status=sig_state, strategy=final["strategy"]), now, plans_path)
@@ -417,11 +476,19 @@ def build(now=None, light=False, bars=None, res=None, events=None, quote=None, s
         save_plans(plans, plans_path)
     research = None
     if cand and out["decision"] not in ("BUY", "SELL"):
-        research = dict(NOT_EXECUTABLE=True, name=cand["name"], timeframe=cand["tf"], side=cand["side"], entry=cand["entry"], stop=cand["stop"], targets=[t["price"] for t in cand["targets"]],
-                        grade_old=cand["grade"], score_old=cand["score"], evidence=ev, note="Research candidate from the existing analysis. It is NOT a trade plan: at least one hard or soft gate failed.")
-    strategies = dict(selected=(None if out["decision"] not in ("BUY", "SELL") else final["strategy"]), library=list(LIBRARY), engine_candidates=[dict(name=p["name"], timeframe=p["tf"], side=p["side"], kind=p["kind"], dist_atr=p["dist_atr"],
-                      evidence=evidence_for(p["kind"], p["side"])) for p in cands[:6]], duplicates_merged=merged,
-                      rejected_reason=("No strategy has evidence grade A, so none may produce a plan." if not any(evidence_for(k, s)["grade"] == "A" for k, s in (("pullback", "long"), ("pullback", "short"), ("breakout", "long"), ("breakout", "short"))) else ""))
+        research = dict(NOT_EXECUTABLE=True, name=cand["name"], timeframe=cand["tf"], side=cand["side"], reference_close=cand["ref_close"], stop_distance=cand["stop_distance"],
+                        target_distance=cand["tp1_distance"], evidence=ev, note="Research signal from a Gold strategy on the latest closed H1 bar. It is NOT a trade plan: at least one gate failed. "
+                        "Distances are measured on the GC=F research chart and are not XAUUSD prices.")
+    fam = []
+    for h in (core_result or {}).get("hypotheses", []):
+        d = h["development"]
+        fam.append(dict(id=h["id"], family=h["family"], name=h["name"], status=("ELIGIBLE" if h["eligible"] else h["decision"]), trades=d.get("trades"), mean_r=d.get("mean_r"),
+                        band=d.get("band_corrected"), reasons=h["reasons"][:2]))
+    strategies = dict(selected=(None if out["decision"] not in ("BUY", "SELL") else final["strategy"]), families=fam,
+                      strategy_c=dict(name="VWAP/EMA regime continuation", status="RESEARCH ONLY", reason="needs volume, which this data lacks; it can never produce an executable signal"),
+                      signal_now=(dict(name=cand["name"], side=cand["side"], eligible=cand["evidence"]["grade"] == "A") if cand else None), research_signals=len(core_info.get("research", [])),
+                      backtest_saved=bool(core_result),
+                      rejected_reason=("No Gold strategy has passed validation, so none may produce a plan." if not (core_result or {}).get("eligible") else ""))
     doc.update(structure=structure, levels=levels, strategies=strategies, final=final, gates=out["gates"], research_candidate=research, plans=plans[-10:][::-1],
                portfolio=dict(equity=state["equity"], equity_entered=known, positions=len(state["positions"]), pending=len(state["pending"]), realised_today=state["realised_today"], limits=limits, account=account),
                sources=dict(research="GC=F via Yahoo, delayed", executable="broker quote file (trader/broker_quote.json), written by the MT5 project or typed on the page", news="stored official calendar (trader/events)"),

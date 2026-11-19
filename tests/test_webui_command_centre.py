@@ -230,6 +230,47 @@ class Sizing(unittest.TestCase):
         self.assertEqual(cc.size_plan(cand("short", "breakout"), quote(), 10000.0, PROFILE, LIMITS)["order_type"], "SELL STOP")
 
 
+class CoreCandidate(unittest.TestCase):
+    def core(self, eligible=False, side="long", exit_="2R", edge=None):
+        return dict(strategy="A1", name="Trend continuation: Donchian 20 breakout, 2R exit", family="A", side=side, exit=exit_, stop=1960.0, ref_close=2000.0, atr=20.0, eligible=eligible, opp_edge=edge)
+
+    RESULT = dict(hypotheses=[dict(id="A1", decision="INSUFFICIENT SAMPLE", reasons=["only 42 completed trades"], development=dict(trades=42, mean_r=0.27, band_corrected=[-0.4, 0.9]))], eligible=[])
+
+    def test_not_eligible_means_grade_c_and_the_gate_blocks(self):
+        c = cc.adapt_core(self.core(), self.RESULT)
+        self.assertEqual(c["evidence"]["grade"], "C")
+        self.assertEqual(c["evidence"]["quality"], "Insufficient")
+        self.assertIn("INSUFFICIENT SAMPLE", c["evidence"]["reason"])
+        out = cc.decide(facts(candidate=c, evidence=c["evidence"]))
+        self.assertEqual(out["decision"], "NO TRADE")
+        self.assertIn("evidence", out["blocked_by"])
+
+    def test_eligible_means_grade_a(self):
+        c = cc.adapt_core(self.core(eligible=True), self.RESULT)
+        self.assertEqual((c["evidence"]["grade"], c["evidence"]["quality"]), ("A", "Validated"))
+
+    def test_distances_are_offsets_not_gcf_prices(self):
+        c = cc.adapt_core(self.core(), self.RESULT)
+        self.assertEqual((c["stop_distance"], c["tp1_distance"]), (40.0, 80.0))
+        c = cc.adapt_core(self.core(exit_="structure", edge=2100.0), self.RESULT)
+        self.assertEqual(c["tp1_distance"], 100.0)
+        self.assertIsNone(cc.adapt_core(None, self.RESULT))
+
+    def test_market_plan_uses_the_executable_side_of_the_quote(self):
+        c = cc.adapt_core(self.core(eligible=True), self.RESULT)
+        long = cc.size_plan(c, quote(bid=3000.0, ask=3000.4), 10000.0, PROFILE, LIMITS)
+        self.assertEqual((long["order_type"], long["entry"]), ("BUY MARKET", 3000.4))
+        self.assertAlmostEqual(long["stop"], 2960.4)           # the 40.0 offset from the entry, not the GC=F stop of 1960
+        self.assertAlmostEqual(long["tp1"], 3080.4)
+        short = cc.size_plan(cc.adapt_core(self.core(side="short"), self.RESULT), quote(bid=3000.0, ask=3000.4), 10000.0, PROFILE, LIMITS)
+        self.assertEqual((short["order_type"], short["entry"]), ("SELL MARKET", 3000.0))
+        self.assertAlmostEqual(short["stop"], 3040.0)
+        self.assertLessEqual(long["max_loss"], 10000.0 * 0.0025 + 0.01)
+
+    def test_no_quote_no_market_plan(self):
+        self.assertIsNone(cc.size_plan(cc.adapt_core(self.core(), self.RESULT), quote("stale"), 10000.0, PROFILE, LIMITS))
+
+
 class Library(unittest.TestCase):
     def test_every_strategy_has_the_required_fields_and_none_claims_validation(self):
         for s in cc.LIBRARY:
